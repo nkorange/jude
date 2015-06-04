@@ -1,2 +1,2 @@
 # jude
-A new toy programming language with some amazing features
+A new toy programming language with some interesting features
