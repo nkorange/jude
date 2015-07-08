@@ -1,17 +1,45 @@
+package jude;
+
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
 /**
- * The Jude language, supports x86_64 platform only and currently does not
- * support the following features:
+ * The Jude language.
+ * <p>
+ * 
+ * <pre>
+ *         ______
+ *        /_   _ /                 __
+ *         /  /    _   _     ___  / /    ___
+ *        /  /    / / / /   / _ \/ /    / _ \
+ *      _/  /    / /_/ /   / /_\  /    / /_\_\
+ *      \__/     \____/    \___/\_\    \ \__//  
+ *                                      \___/
+ * </pre>
+ * <p>
+ * It can now handle some mini inputs, test it using programs like:
+ * 
+ * <pre>
+ * int a = 10;
+ * 
+ * void main() {
+ * 	int c = 9;
+ * 	a = c + 11 * 8;
+ * }
+ * </pre>
+ * 
+ * It will be improved step by step and currently does not support the following
+ * features:
  * <p>
  * 1. pointer type <br>
  * 2. array type <br>
  * 3. reference type <br>
  * 4. user defined type including List, Map, Structure, Class etc.<br>
  * 5. a statement starts with "(".<br>
- * 6. return in a block, even in a procedure.
+ * 6. return in a block, even in a procedure.<br>
+ * 7. overload of procedure, <br>
+ * which, however, would possibly be added in the future.
  * 
  * 
  * @author zpf.073@gmail.com
@@ -19,13 +47,14 @@ import java.util.Map;
  */
 public class Jude {
 
-	static final String TAB = "\t";
+	static final char TAB = '\t';
 	static final char CR = '\r';
 	static final char LF = '\n';
+	static final char BLANK = ' ';
 
 	static char look;
 
-	static String value;
+	static String token;
 
 	static Type keyType;
 
@@ -60,6 +89,7 @@ public class Jude {
 	/**
 	 * Keywords definition
 	 */
+	public static final String VOID = "void";
 	public static final String INT = "int";
 	public static final String LONG = "long";
 	public static final String BYTE = "byte";
@@ -82,6 +112,7 @@ public class Jude {
 	static {
 
 		keywords = new HashMap<String, Type>();
+		keywords.put(VOID, Type.VOID);
 		keywords.put(INT, Type.INT);
 		keywords.put(LONG, Type.LONG);
 		keywords.put(BYTE, Type.BYTE);
@@ -117,15 +148,15 @@ public class Jude {
 		if (keywords.containsKey(name)) {
 			return keywords.get(name);
 		}
-		
+
 		if (isLegalVar(name)) {
 			return Type.VAR;
 		}
-		
+
 		if (isReturn(name)) {
 			return Type.RETURN;
 		}
-		
+
 		if (isDefinedMethod(name)) {
 			return Type.PROC;
 		}
@@ -143,6 +174,10 @@ public class Jude {
 		System.out.println();
 	}
 
+	static void compileInfo(Object s) {
+		System.out.println("[Jude] " + s);
+	}
+
 	static void postLabel(String l) {
 		System.out.println(l + ":");
 	}
@@ -154,7 +189,7 @@ public class Jude {
 	static void postMethodEndLabel(String name) {
 		System.out.println("end_" + name + ":");
 	}
-	
+
 	static boolean isReturn(String name) {
 		return "return".equals(name);
 	}
@@ -266,7 +301,17 @@ public class Jude {
 	}
 
 	static boolean isName(String str) {
-		// TODO check if str is a legal variable name
+
+		if (!isAlpha(str.charAt(0))) {
+			return false;
+		}
+
+		int ind = 1;
+		while (ind < str.length()) {
+			if (!isAlNum(str.charAt(ind)))
+				return false;
+			ind++;
+		}
 		return true;
 	}
 
@@ -293,10 +338,14 @@ public class Jude {
 	}
 
 	static boolean isWhite(char c) {
-		if (c == ' ' || c == '\t') {
+		if (c == BLANK || c == TAB) {
 			return true;
 		}
 		return false;
+	}
+
+	static boolean isEndOfLine(char c) {
+		return c == CR || c == LF;
 	}
 
 	static void skipWhite() throws IOException {
@@ -339,13 +388,18 @@ public class Jude {
 		if (!isAlpha(look)) {
 			expected("Name " + look);
 		}
-		value = "";
+		token = "";
 		while (isAlNum(look)) {
-			value += look;
+			token += look;
 			getChar();
 		}
 		skipWhite();
-		return value;
+		return token;
+	}
+
+	// TODO Let's suppose value is just a number for now.
+	static String getValue() throws IOException {
+		return String.valueOf(getNum());
 	}
 
 	static int getNum() throws IOException {
@@ -362,13 +416,18 @@ public class Jude {
 		return val;
 	}
 
-	static String getStr() throws IOException {
+	static String getToken() throws IOException {
 		newLine();
 		String str = "";
-		while (!isWhite(look) && look != ';') {
-			str += look;
-			getChar();
+		if (isNum(String.valueOf(look))) {
+			return String.valueOf(getNum());
 		}
+
+		if (isName(String.valueOf(look))) {
+			return getName();
+		}
+
+		str += look;
 		skipWhite();
 		return str;
 
@@ -386,7 +445,7 @@ public class Jude {
 
 	static void scan() throws IOException {
 		getName();
-		keyType = findKeyword(value);
+		keyType = findKeyword(token);
 	}
 
 	static void init() throws IOException {
@@ -442,7 +501,7 @@ public class Jude {
 	static void program() throws IOException {
 
 		emitLn("section .text");
-		emitLn("global main");
+		emitLn("global start_main");
 
 		if (lastName != null) {
 			if (isDefinedMethod(lastName)) {
@@ -454,8 +513,9 @@ public class Jude {
 			scan();
 		}
 
-		while (isKeyword(value)) {
+		while (isKeyword(token)) {
 
+			System.out.println(token);
 			switch (keyType) {
 			case VOID:
 			case INT:
@@ -482,8 +542,7 @@ public class Jude {
 
 		boolean endOfDecl = false;
 		emitLn("section .data");
-		while (isKeyword(value)) {
-
+		while (isKeyword(token)) {
 			switch (keyType) {
 			case INT:
 			case BYTE:
@@ -491,6 +550,7 @@ public class Jude {
 			case LONG:
 			case CHAR:
 			case SHORT:
+			case VOID:
 				endOfDecl = DeclVar();
 				if (!endOfDecl) {
 					return;
@@ -516,10 +576,10 @@ public class Jude {
 		if (look == '=') {
 			match('=');
 			// get the initial value:
-			varValue = getStr();
+			varValue = getToken();
 		}
 
-		if (!isAssignValid(toType(type), varValue)) {
+		if (varValue != null && !isAssignValid(toType(type), varValue)) {
 			abort("invalid assignment");
 		}
 
@@ -564,10 +624,10 @@ public class Jude {
 
 	static void doMethod() throws IOException {
 
-		String type = value;
+		String type = token;
 		String name = null;
-		matchKeyword(value);
-		name = value;
+		matchKeyword(token);
+		name = token;
 		if (isDefinedMethod(name)) {
 			duplicate(name);
 		}
@@ -590,20 +650,20 @@ public class Jude {
 		postMethodStartLabel(name);
 		storeMethodParams();
 		match('{');
-		int stackSize = storeLocalVars();
 		int offset = 0;
-
 		String varType = getName();
-		while (isType(type)) {
-			matchType(type);
+
+		while (isType(varType)) {
+			matchType(varType);
 			offset += doStoreLocalVar(toType(varType), offset);
 			varType = getName();
 		}
 
-		if (stackSize > MAX_STACK_SIZE) {
+		if (offset > MAX_STACK_SIZE) {
 			abort("stack overflow :(");
 		}
-		methodProlog(stackSize);
+
+		methodProlog(offset);
 		firstBlock(varType);
 		match('}');
 		postMethodEndLabel(name);
@@ -636,7 +696,7 @@ public class Jude {
 	static void doReturn() {
 
 	}
-	
+
 	static int paramList() throws IOException {
 		int n = 0;
 		match('(');
@@ -652,23 +712,22 @@ public class Jude {
 		match(')');
 		return 2 * n;
 	}
-	
+
 	static void param() throws IOException {
 		expression();
 		push();
 	}
-	
+
 	static void cleanStack(int n) {
 		if (n > 0) {
 			emit("ADD #");
 			System.out.println(n + " ,SP");
 		}
 	}
-	
+
 	static void call(String name) {
 		emitLn("call " + name);
 	}
-
 
 	static void storeMethodParams() throws IOException {
 		match('(');
@@ -713,54 +772,46 @@ public class Jude {
 		currentOffset += size;
 	}
 
-	static int storeLocalVars() throws IOException {
-		int offset = 0;
-
-		String type = getName();
-		while (isType(type)) {
-			matchType(type);
-			offset += doStoreLocalVar(toType(type), offset);
-			// TODO The last one of 'type' should be used in the next statement,
-			// though it was scanned in this round.
-			type = getName();
-		}
-
-		return offset;
-	}
-
 	static int doStoreLocalVar(Type type, int offset) throws IOException {
 
 		int offsetPerVar = sizeOfType(type);
 		String name;
 		String value;
 		do {
-			name = getName();
+			name = token;
 			value = null;
 			if (isDefinedLocalVar(name)) {
 				duplicate(name);
 			}
+			offset += offsetPerVar;
 			defineLocalVar(name, type, offset);
 
 			if (look == '=') {
 				match('=');
-				value = getName();
+				value = getValue();
 				if (!isAssignValid(type, value)) {
-					abort("invalid assignment type:" + type + ", value:"
+					abort("invalid assignment type:" + type + ", _value:"
 							+ value);
 				}
 				assignLocalVar(name, value);
-			} else if (look == ',') {
+			}
+
+			if (look == ',') {
 				match(',');
 				initLocalVar(name);
 				continue;
-			} else if (look == ';') {
+			}
+
+			if (look == ';') {
 				match(';');
 				break;
 			} else {
 				expected(", or = or ;");
 			}
-			offset += offsetPerVar;
+
+			scan();
 		} while (true);
+
 		return offset;
 	}
 
@@ -814,7 +865,7 @@ public class Jude {
 
 	static void block() throws IOException {
 		scan();
-		firstBlock(value);
+		firstBlock(token);
 	}
 
 	static void firstBlock(String word) throws IOException {
@@ -846,15 +897,17 @@ public class Jude {
 			default:
 				abort("illegal identifier:" + word);
 			}
-			scan();
+
+			token = getToken();
+			keyType = findKeyword(token);
 		}
 	}
 
 	static boolean DeclVar() throws IOException {
-		String type = value;
+		String type = token;
 		String name = null;
-		matchKeyword(value);
-		name = value;
+		matchKeyword(token);
+		name = token;
 		if (isDefinedGlobalVar(name)) {
 			duplicate(name);
 		}
@@ -862,6 +915,9 @@ public class Jude {
 		switch (look) {
 		case ';':
 		case '=':
+			if (toType(type) == Type.VOID) {
+				abort("cannot define a variable of void type!");
+			}
 			defineGlobalVar(name, type);
 			doDeclVar(name, type);
 			break;
@@ -892,6 +948,7 @@ public class Jude {
 		match('=');
 		expression();
 		store(name);
+		match(';');
 	}
 
 	static void store(String name) {
@@ -927,7 +984,7 @@ public class Jude {
 			match(')');
 		} else if (isAlpha(look)) {
 			getName();
-			loadVar(value);
+			loadVar(token);
 		} else {
 			loadConst(getNum());
 		}
@@ -1053,7 +1110,6 @@ public class Jude {
 			case '-':
 				substract();
 				break;
-
 			}
 		}
 	}
