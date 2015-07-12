@@ -1,5 +1,3 @@
-package jude;
-
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
@@ -9,16 +7,16 @@ import java.util.Map;
  * <p>
  * 
  * <pre>
- *         ______
- *        /_   _ /                 __
- *         /  /    _   _     ___  / /    ___
- *        /  /    / / / /   / _ \/ /    / _ \
- *      _/  /    / /_/ /   / /_\  /    / /_\_\
- *      \__/     \____/    \___/\_\    \ \__//  
- *                                      \___/
+ *          ______                     __         
+ *         /_   _ /                   / /
+ *          /  /    __  __    ___    / /   ____
+ *         /  /    / / / /   / _ \  / /   / / \ \
+ *        /  /    / / / /   / / \ \/ /   / /__/_/
+ *      _/  /    / /_/ /   / /___\  /    \ \_____
+ *      \__/     \____/    \_______/      \_____/
  * </pre>
  * <p>
- * It can now handle some mini inputs, test it using programs like:
+ * It can now handle some simple inputs, test it using programs like:
  * 
  * <pre>
  * int a = 10;
@@ -38,9 +36,12 @@ import java.util.Map;
  * 4. user defined type including List, Map, Structure, Class etc.<br>
  * 5. a statement starts with "(".<br>
  * 6. return in a block, even in a procedure.<br>
- * 7. overload of procedure, <br>
- * which, however, would possibly be added in the future.
- * 
+ * 7. overload of procedure.
+ * <p>
+ * About the types:
+ * <p>
+ * Refer to: http://www.nasm.us/doc/nasmdo11.html for how to manipulate
+ * registers in 64-bit system.
  * 
  * @author zpf.073@gmail.com
  *
@@ -204,7 +205,7 @@ public class Jude {
 	}
 
 	static boolean isDefinedLocalVar(String name) {
-		return localVariables.containsKey(name) || params.containsKey(name);
+		return localVariables.containsKey(name);
 	}
 
 	static boolean isDefinedMethod(String name) {
@@ -213,6 +214,46 @@ public class Jude {
 
 	static void defineGlobalVar(String name, String type) {
 		globalVariables.put(name, type);
+	}
+
+	static String getGlobalVarType(String name) {
+		return globalVariables.get(name);
+	}
+
+	static Type getLocalVarType(String name) {
+		return localVariables.get(name).type;
+	}
+
+	static Type typeOf(String name) {
+		if (isDefinedGlobalVar(name)) {
+			return types.get(getGlobalVarType(name));
+		}
+		if (isDefinedLocalVar(name)) {
+			return getLocalVarType(name);
+		}
+		if (isParam(name)) {
+			return getParamType(name);
+		}
+		expected("defined variable:" + name);
+		return Type.NONE;
+	}
+
+	static String regOfType(Type type) {
+		switch (type) {
+		case BOOL:
+		case BYTE:
+		case CHAR:
+			return "al";
+		case SHORT:
+			return "ax";
+		case INT:
+			return "eax";
+		case LONG:
+			return "rax";
+		default:
+			abort("unknown type:" + type);
+		}
+		return null;
 	}
 
 	static void defineLocalVar(String name, Type type, int offset) {
@@ -397,7 +438,7 @@ public class Jude {
 		return token;
 	}
 
-	// TODO Let's suppose value is just a number for now.
+	// TODO Let's assume value is just a number for now.
 	static String getValue() throws IOException {
 		return String.valueOf(getNum());
 	}
@@ -466,6 +507,7 @@ public class Jude {
 		return types.get(type);
 	}
 
+	// number of byte in each type
 	static int sizeOfType(Type type) {
 		switch (type) {
 		case BOOL:
@@ -764,6 +806,10 @@ public class Jude {
 		return params.containsKey(name);
 	}
 
+	static Type getParamType(String name) {
+		return params.get(name).type;
+	}
+
 	static void doAddParam(String name, int size) {
 		ParamInfo info = new ParamInfo();
 		info.offset = currentOffset;
@@ -820,22 +866,22 @@ public class Jude {
 		int offset = localVariables.get(name).offset;
 		switch (localVariables.get(name).type) {
 		case BOOL:
-			emitLn("mov db [ebp-" + offset + "], " + boolNumeric(value));
+			emitLn("mov db [rbp-" + offset + "], " + boolNumeric(value));
 			break;
 		case CHAR:
-			emitLn("mov db [ebp-" + offset + "], " + (int) (value.charAt(0)));
+			emitLn("mov db [rbp-" + offset + "], " + (int) (value.charAt(0)));
 			break;
 		case BYTE:
-			emitLn("mov db [ebp-" + offset + "], " + value);
+			emitLn("mov db [rbp-" + offset + "], " + value);
 			break;
 		case SHORT:
-			emitLn("mov dw [ebp-" + offset + "], " + value);
+			emitLn("mov dw [rbp-" + offset + "], " + value);
 			break;
 		case INT:
-			emitLn("mov dd [ebp-" + offset + "], " + value);
+			emitLn("mov dd [rbp-" + offset + "], " + value);
 			break;
 		case LONG:
-			emitLn("mov dq [ebp-" + offset + "], " + value);
+			emitLn("mov dq [rbp-" + offset + "], " + value);
 			break;
 		default:
 			abort("invalid type");
@@ -847,14 +893,14 @@ public class Jude {
 	}
 
 	static void methodProlog(int stackSize) {
-		emitLn("push ebp");
-		emitLn("mov ebp, esp");
-		emitLn("sub esp, " + stackSize);
+		emitLn("push rbp");
+		emitLn("mov rbp, rsp");
+		emitLn("sub rsp, " + stackSize);
 	}
 
 	static void methodEpilog() {
-		emitLn("mov esp, ebp");
-		emitLn("pop ebp");
+		emitLn("mov rsp, rbp");
+		emitLn("pop rbp");
 		emitLn("ret");
 	}
 
@@ -939,7 +985,7 @@ public class Jude {
 	}
 
 	static void loadConst(int n) {
-		emit("MOVE eax, ");
+		emit("MOVE rax, ");
 		System.out.println(n);
 	}
 
@@ -954,24 +1000,29 @@ public class Jude {
 	static void store(String name) {
 
 		if (isDefinedGlobalVar(name)) {
-			emitLn("mov [" + name + "], eax");
+			emitLn("mov [" + name + "], rax");
 		} else if (isDefinedLocalVar(name)) {
-			emitLn("mov [ebp-" + getLocalVarOffset(name) + "], eax");
+			emitLn("mov [rbp-" + getLocalVarOffset(name) + "], rax");
 		} else if (isParam(name)) {
-			emitLn("mov [ebp+" + getParamOffset(name) + "], eax");
+			emitLn("mov [rbp+" + getParamOffset(name) + "], rax");
 		} else {
 			abort("expected legal variable, but found " + name);
 		}
 	}
 
 	static void loadVar(String name) {
+		// have to use the type info of the variable:
+		emitLn("mov rax, 0"); // Clear all bits of rax
+
+		String reg = regOfType(typeOf(name));
 
 		if (isDefinedGlobalVar(name)) {
-			emitLn("mov eax, " + name);
+
+			emitLn("mov " + reg + ", " + name);
 		} else if (isDefinedLocalVar(name)) {
-			emitLn("mov eax, [ebp-" + getLocalVarOffset(name) + "]");
+			emitLn("mov " + reg + ", [rbp-" + getLocalVarOffset(name) + "]");
 		} else if (isParam(name)) {
-			emitLn("mov eax, [ebp+" + getParamOffset(name) + "]");
+			emitLn("mov " + reg + ", [rbp+" + getParamOffset(name) + "]");
 		} else {
 			abort("expected legal variable, but found " + name);
 		}
@@ -1001,36 +1052,36 @@ public class Jude {
 	}
 
 	static void negate() {
-		emitLn("neg eax");
+		emitLn("neg rax");
 	}
 
 	static void push() {
-		emitLn("push eax");
+		emitLn("push rax");
 	}
 
 	static void pop() {
-		emitLn("pop eax");
+		emitLn("pop rax");
 	}
 
 	static void popAdd() {
-		emitLn("pop ebx");
-		emitLn("add eax, ebx");
+		emitLn("pop rbx");
+		emitLn("add rax, rbx");
 	}
 
 	static void popSub() {
-		emitLn("pop ebx");
-		emitLn("sub eax, ebx");
+		emitLn("pop rbx");
+		emitLn("sub rax, rbx");
 	}
 
 	static void popMul() {
-		emitLn("pop ebx");
-		emitLn("mul ebx");
+		emitLn("pop rbx");
+		emitLn("mul rbx");
 	}
 
 	static void popDiv() {
-		emitLn("xor edx, edx");
-		emitLn("pop ebx");
-		emitLn("div ebx");
+		emitLn("xor rdx, rdx");
+		emitLn("pop rbx");
+		emitLn("div rbx");
 	}
 
 	static void popMod() {
