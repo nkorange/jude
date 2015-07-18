@@ -348,8 +348,19 @@ public class Jude {
 		abort("Duplicate Identifier " + name);
 	}
 
-	static void getChar() throws IOException {
+	static char getChar() throws IOException {
 		look = (char) System.in.read();
+		return look;
+	}
+
+	static char getAChar() throws IOException {
+		match('\'');
+		
+		char c = look;
+		compileInfo(c);
+		getChar();
+		match('\'');
+		return c;
 	}
 
 	static String getStoreType(Type varType) {
@@ -496,9 +507,28 @@ public class Jude {
 		return token;
 	}
 
-	// TODO Let's assume value is just a number for now.
-	static String getValue() throws IOException {
-		return String.valueOf(getNum());
+	static String getValue(Type type) throws IOException {
+
+		// Allow assign different form of values to different types:
+		String tmp;
+		switch (type) {
+		case BOOL:
+			tmp = getName();
+			if (!isBool(tmp)) {
+				abort("invalid bool value:" + tmp);
+			}
+			return boolNumeric(tmp);
+		case CHAR:
+			return String.valueOf(getAChar());
+		case SHORT:
+		case INT:
+		case LONG:
+			return String.valueOf(getNum());
+		default:
+			abort("unknown type:" + type);
+		}
+		return null;
+
 	}
 
 	static int getNum() throws IOException {
@@ -548,9 +578,6 @@ public class Jude {
 	}
 
 	static void init() throws IOException {
-
-		// Predefine some procedures and constants:
-		defineHandleOverFlow();
 
 		getChar();
 		scan();
@@ -606,6 +633,9 @@ public class Jude {
 
 		emitLn("section .text");
 		emitLn("global start_main");
+
+		// Predefine some procedures and constants:
+		defineHandleOverFlow();
 
 		if (lastName != null) {
 			if (isDefinedMethod(lastName)) {
@@ -672,18 +702,15 @@ public class Jude {
 		allocaGlobalVar(name, type);
 	}
 
-	// This method allocate global variables
+	// This method allocates global variables
 	static void allocaGlobalVar(String name, String type) throws IOException {
 		// now we start a real allocation with nasm:
 		String varValue = null;
 		if (look == '=') {
 			match('=');
 			// get the initial value:
-			varValue = getToken();
-		}
-
-		if (varValue != null && !isAssignValid(toType(type), varValue)) {
-			abort("invalid assignment");
+			// TODO let's limit here that assignment is not permitted:
+			varValue = getValue(toType(type));
 		}
 
 		if (varValue != null) {
@@ -883,10 +910,8 @@ public class Jude {
 
 		int offsetPerVar = sizeOfType(type);
 		String name;
-		String value;
 		do {
 			name = token;
-			value = null;
 			if (isDefinedLocalVar(name)) {
 				duplicate(name);
 			}
@@ -895,12 +920,8 @@ public class Jude {
 
 			if (look == '=') {
 				match('=');
-				value = getValue();
-				if (!isAssignValid(type, value)) {
-					abort("invalid assignment type:" + type + ", _value:"
-							+ value);
-				}
-				assignLocalVar(name, value);
+				doAssignment(type);
+				store(type, name);
 			}
 
 			if (look == ',') {
@@ -917,38 +938,12 @@ public class Jude {
 				expected(", or = or ;");
 			}
 
-			
 		} while (true);
 
 		return offset;
 	}
 
-	static void assignLocalVar(String name, String value) {
 
-		int offset = localVariables.get(name).offset;
-		switch (localVariables.get(name).type) {
-		case BOOL:
-			emitLn("mov db [rbp-" + offset + "], " + boolNumeric(value));
-			break;
-		case CHAR:
-			emitLn("mov db [rbp-" + offset + "], " + (int) (value.charAt(0)));
-			break;
-		case BYTE:
-			emitLn("mov db [rbp-" + offset + "], " + value);
-			break;
-		case SHORT:
-			emitLn("mov dw [rbp-" + offset + "], " + value);
-			break;
-		case INT:
-			emitLn("mov dd [rbp-" + offset + "], " + value);
-			break;
-		case LONG:
-			emitLn("mov dq [rbp-" + offset + "], " + value);
-			break;
-		default:
-			abort("invalid type");
-		}
-	}
 
 	static void initLocalVar(Type type, String name) {
 		// TODO
@@ -1055,9 +1050,30 @@ public class Jude {
 		return Type.INT;
 	}
 
+	// Treat char as common constant number:
+	static Type loadChar(char c) {
+		emitLn("mov rax, 0");
+		emitLn("mov al, " + (int) c);
+
+		return Type.CHAR;
+	}
+
+	static Type loadBool(String boolValue) {
+		emitLn("mov rax, 0");
+		emitLn("mov al, " + boolNumeric(boolValue));
+
+		return Type.BOOL;
+	}
+
 	static void assignment(Type type, String name) throws IOException {
 
 		match('=');
+		doAssignment(type);
+		store(type, name);
+		match(';');
+	}
+	
+	static void doAssignment(Type type) throws IOException {
 		Type expType = expression();
 		// Determine if expType and type is compatible:
 		if ((type != expType) && (expType == Type.BOOL)) {
@@ -1068,13 +1084,11 @@ public class Jude {
 			// most straight and natural way.
 			abort("invalid assignment from " + expType + " to " + type);
 		}
-		store(type, name);
-		match(';');
 	}
 
 	static void store(Type type, String name) {
 
-		// store with the right register:
+		// store with the correct register:
 		String reg = regOfType(typeOf(name));
 		if (isDefinedGlobalVar(name)) {
 			emitLn("mov [" + name + "], " + reg);
@@ -1125,10 +1139,21 @@ public class Jude {
 			match(')');
 			return res;
 		} else if (isAlpha(look)) {
-			getName();
+			String tmp = getName();
+			// Don't forget bool value is also a non-number string. Usually a
+			// bool assignment is invalid in an expression, but we will just
+			// leave the judgment to later program.
+			if (isBool(tmp)) {
+				return loadBool(tmp);
+			}
+
 			return loadVar(token);
-		} else {
+		} else if (isNum(String.valueOf(look))) {
 			return loadConst(getNum());
+		} else if (look == '\'') {
+			return loadChar(getAChar());
+		} else {
+			return Type.NONE;
 		}
 	}
 
