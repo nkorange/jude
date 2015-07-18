@@ -36,12 +36,62 @@ import java.util.Map;
  * 4. user defined type including List, Map, Structure, Class etc.<br>
  * 5. a statement starts with "(".<br>
  * 6. return in a block, even in a procedure.<br>
- * 7. overload of procedure.
+ * 7. overload of procedure.<br>
+ * 8. floating type.<br>
+ * 9. string type.
  * <p>
  * About the types:
  * <p>
  * Refer to: http://www.nasm.us/doc/nasmdo11.html for how to manipulate
  * registers in 64-bit system.
+ * <p>
+ * <a href="http://www.csee.umbc.edu/portal/help/nasm/sample_64.shtml">Helpful
+ * programs</a>
+ * <p>
+ * http://www.posix.nl/linuxassembly/nasmdochtml/nasmdoca.html
+ * <p>
+ * https://www.tortall.net/projects/yasm/manual/html/nasm-immediate.html
+ * <p>
+ * http://stackoverflow.com/questions/4017424/how-to-check-if-a-signed-integer-
+ * is-neg-or-pos
+ * <p>
+ * http://stackoverflow.com/questions/16917643/how-to-push-a-64bit-int-in-nasm
+ * <p>
+ * http://www.cwde.de/
+ * <p>
+ * http://stackoverflow.com/questions/9072922/nasm-idiv-a-negative-value
+ * 
+ * <pre>
+ * global _main
+ * 
+ * section .text
+ * 
+ * _main:
+ *     mov rax, 0x2000004
+ *     mov rdi, 1
+ *     lea rsi, [rel msg]
+ *     mov rdx, msg.len
+ *     syscall
+ * 
+ *     mov rax, 0x2000001
+ *     mov rdi, 0
+ *     syscall
+ * 
+ * section .data
+ * 
+ * msg:    db  "Hello, World!", 10
+ * .len:   equ $ - msg
+ * </pre>
+ * 
+ * <h2>Assignment</h2>
+ * Valid assignments:<br>
+ * 
+ * <pre>
+ * < byte | char | short | int | long > = 
+ * < byte | char | short | int | long > 
+ * < + | - | * | / > 
+ * < byte | char | short | int | long >
+ * </pre>
  * 
  * @author zpf.073@gmail.com
  *
@@ -76,7 +126,7 @@ public class Jude {
 	// static Map<String, Integer> names = new HashMap<String, Integer>();
 
 	static enum Type {
-		VOID, INT, LONG, BYTE, SHORT, BOOL, CHAR, IF, ELSE, WHILE, FOR, IN, AS, SWITCH, CASE, CLASS,
+		VOID, BOOL, CHAR, BYTE, SHORT, INT, LONG, IF, ELSE, WHILE, FOR, IN, AS, SWITCH, CASE, CLASS,
 
 		NONE, END, VAR, PROC, RETURN
 	};
@@ -198,6 +248,14 @@ public class Jude {
 	static boolean isLegalVar(String name) {
 		return isDefinedGlobalVar(name) || isDefinedLocalVar(name)
 				|| isParam(name);
+	}
+
+	static boolean isLegalOperation(Type firstType, Type secondType) {
+
+		if (firstType == Type.BOOL || secondType == Type.BOOL) {
+			return false;
+		}
+		return true;
 	}
 
 	static boolean isDefinedGlobalVar(String name) {
@@ -490,6 +548,10 @@ public class Jude {
 	}
 
 	static void init() throws IOException {
+
+		// Predefine some procedures and constants:
+		defineHandleOverFlow();
+
 		getChar();
 		scan();
 	}
@@ -557,7 +619,6 @@ public class Jude {
 
 		while (isKeyword(token)) {
 
-			System.out.println(token);
 			switch (keyType) {
 			case VOID:
 			case INT:
@@ -693,12 +754,12 @@ public class Jude {
 		storeMethodParams();
 		match('{');
 		int offset = 0;
-		String varType = getName();
+		String varType = getToken();
 
 		while (isType(varType)) {
 			matchType(varType);
 			offset += doStoreLocalVar(toType(varType), offset);
-			varType = getName();
+			varType = getToken();
 		}
 
 		if (offset > MAX_STACK_SIZE) {
@@ -756,8 +817,8 @@ public class Jude {
 	}
 
 	static void param() throws IOException {
-		expression();
-		push();
+		Type expType = expression();
+		push(expType);
 	}
 
 	static void cleanStack(int n) {
@@ -844,7 +905,8 @@ public class Jude {
 
 			if (look == ',') {
 				match(',');
-				initLocalVar(name);
+				initLocalVar(type, name);
+				scan();
 				continue;
 			}
 
@@ -855,7 +917,7 @@ public class Jude {
 				expected(", or = or ;");
 			}
 
-			scan();
+			
 		} while (true);
 
 		return offset;
@@ -888,7 +950,7 @@ public class Jude {
 		}
 	}
 
-	static void initLocalVar(String name) {
+	static void initLocalVar(Type type, String name) {
 		// TODO
 	}
 
@@ -932,7 +994,7 @@ public class Jude {
 				doSwitch();
 				break;
 			case VAR:
-				assignment(word);
+				assignment(typeOf(word), word);
 				break;
 			case PROC:
 				callMethod(word);
@@ -984,33 +1046,48 @@ public class Jude {
 
 	}
 
-	static void loadConst(int n) {
-		emit("MOVE rax, ");
+	static Type loadConst(int n) {
+		// By default rax accepts a 32-bit number:
+		emit("mov rax, ");
 		System.out.println(n);
+
+		// Temporarily only int constants:
+		return Type.INT;
 	}
 
-	static void assignment(String name) throws IOException {
+	static void assignment(Type type, String name) throws IOException {
 
 		match('=');
-		expression();
-		store(name);
+		Type expType = expression();
+		// Determine if expType and type is compatible:
+		if ((type != expType) && (expType == Type.BOOL)) {
+
+			// This allows max flexibility in assignment, which also apparently
+			// brings the risk of overflowing and confuse. But I believe if
+			// something has its necessity to be used, it should be used in the
+			// most straight and natural way.
+			abort("invalid assignment from " + expType + " to " + type);
+		}
+		store(type, name);
 		match(';');
 	}
 
-	static void store(String name) {
+	static void store(Type type, String name) {
 
+		// store with the right register:
+		String reg = regOfType(typeOf(name));
 		if (isDefinedGlobalVar(name)) {
-			emitLn("mov [" + name + "], rax");
+			emitLn("mov [" + name + "], " + reg);
 		} else if (isDefinedLocalVar(name)) {
-			emitLn("mov [rbp-" + getLocalVarOffset(name) + "], rax");
+			emitLn("mov [rbp-" + getLocalVarOffset(name) + "], " + reg);
 		} else if (isParam(name)) {
-			emitLn("mov [rbp+" + getParamOffset(name) + "], rax");
+			emitLn("mov [rbp+" + getParamOffset(name) + "], " + reg);
 		} else {
 			abort("expected legal variable, but found " + name);
 		}
 	}
 
-	static void loadVar(String name) {
+	static Type loadVar(String name) {
 		// have to use the type info of the variable:
 		emitLn("mov rax, 0"); // Clear all bits of rax
 
@@ -1026,36 +1103,55 @@ public class Jude {
 		} else {
 			abort("expected legal variable, but found " + name);
 		}
+
+		// Sign extension, we extend the value to until rax:
+		if ("al".equals(reg)) {
+			emitLn("cbw");
+			emitLn("cwde");
+			emitLn("cdqe");
+		} else if ("ax".equals(reg)) {
+			emitLn("cwde");
+			emitLn("cdqe");
+		} else if ("eax".equals(reg)) {
+			emitLn("cdqe");
+		}
+		return typeOf(name);
 	}
 
-	static void factor() throws IOException {
+	static Type factor() throws IOException {
 		if (look == '(') {
 			match('(');
-			expression();
+			Type res = expression();
 			match(')');
+			return res;
 		} else if (isAlpha(look)) {
 			getName();
-			loadVar(token);
+			return loadVar(token);
 		} else {
-			loadConst(getNum());
+			return loadConst(getNum());
 		}
 	}
 
-	static void negFactor() throws IOException {
+	static Type negFactor() throws IOException {
+		Type resType;
 		match('-');
 		if (isDigit(look)) {
-			loadConst(-getNum());
+			resType = loadConst(-getNum());
 		} else {
-			factor();
+			resType = factor();
 			negate();
 		}
+		return resType;
 	}
 
+	// Not sure if this operation is valid
 	static void negate() {
 		emitLn("neg rax");
 	}
 
-	static void push() {
+	// push to the stack ignoring the type of the value because we have sign
+	// extended the value to 64-bit
+	static void push(Type type) {
 		emitLn("push rax");
 	}
 
@@ -1063,106 +1159,192 @@ public class Jude {
 		emitLn("pop rax");
 	}
 
-	static void popAdd() {
+	static Type popAdd(Type firstType, Type secondType) {
+
+		// If the add operation is invalid:
+		if (!isLegalOperation(firstType, secondType)) {
+			abort("invalid operation between " + firstType + " and "
+					+ secondType);
+		}
 		emitLn("pop rbx");
 		emitLn("add rax, rbx");
+
+		// Consider the possibility of overflowing:
+		if (firstType == Type.LONG || secondType == Type.LONG) {
+			emitLn("jo handle_overflow");
+		}
+
+		// Which type should be returned:
+		if (firstType.ordinal() < secondType.ordinal()) {
+			return secondType;
+		} else {
+			return firstType;
+		}
 	}
 
-	static void popSub() {
+	static Type popSub(Type firstType, Type secondType) {
+		// If the add operation is invalid:
+		if (!isLegalOperation(firstType, secondType)) {
+			abort("invalid operation between " + firstType + " and "
+					+ secondType);
+		}
+
 		emitLn("pop rbx");
 		emitLn("sub rax, rbx");
+
+		// Consider the possibility of overflowing:
+		if (firstType == Type.LONG || secondType == Type.LONG) {
+			emitLn("jo handle_overflow");
+		}
+
+		// Which type should be returned:
+		if (firstType.ordinal() < secondType.ordinal()) {
+			return secondType;
+		} else {
+			return firstType;
+		}
 	}
 
-	static void popMul() {
+	static Type popMul(Type firstType, Type secondType) {
+
+		// If the add operation is invalid:
+		if (!isLegalOperation(firstType, secondType)) {
+			abort("invalid operation between " + firstType + " and "
+					+ secondType);
+		}
+
 		emitLn("pop rbx");
-		emitLn("mul rbx");
+		emitLn("imul rbx");
+		emitLn("jo handle_overflow");
+
+		// Which type should be returned:
+		if (firstType.ordinal() < secondType.ordinal()) {
+			return secondType;
+		} else {
+			return firstType;
+		}
 	}
 
-	static void popDiv() {
+	static Type popDiv(Type firstType, Type secondType) {
+
+		// If the add operation is invalid:
+		if (!isLegalOperation(firstType, secondType)) {
+			abort("invalid operation between " + firstType + " and "
+					+ secondType);
+		}
+
+		// For integer numbers, if the dividend is smaller than divisor, the
+		// result is zero:
 		emitLn("xor rdx, rdx");
 		emitLn("pop rbx");
-		emitLn("div rbx");
+		emitLn("idiv rbx");
+		emitLn("jo handle_overflow");
+		return firstType;
 	}
 
 	static void popMod() {
 
 	}
 
-	static void add() throws IOException {
+	static Type add(Type type) throws IOException {
 		match('+');
-		term();
-		popAdd();
+		Type termType = term();
+
+		// Check if type and termType is compatible:
+
+		popAdd(type, termType);
+
+		return type;
 	}
 
-	static void substract() throws IOException {
+	static Type substract(Type type) throws IOException {
 		match('-');
-		term();
-		popSub();
+		Type termType = term();
+		popSub(type, termType);
+		return type;
 	}
 
-	static void multiply() throws IOException {
+	static Type multiply(Type type) throws IOException {
 		match('*');
-		factor();
-		popMul();
+		Type factorType = factor();
+		return popMul(type, factorType);
 	}
 
-	static void divide() throws IOException {
+	static Type divide(Type type) throws IOException {
 		match('/');
-		factor();
-		popDiv();
+		Type factorType = factor();
+		return popDiv(type, factorType);
 	}
 
-	static void term() throws IOException {
-		factor();
-		term1();
+	static Type term() throws IOException {
+		Type factorType = factor();
+		Type term1Type = term1(factorType);
+		return term1Type;
 	}
 
-	static void term1() throws IOException {
+	static Type term1(Type type) throws IOException {
+
+		Type resType = type;
 		while (isMulOp(look)) {
-			push();
+			push(type);
 			switch (look) {
 			case '*':
-				multiply();
+				resType = multiply(type);
 				break;
 			case '/':
-				divide();
+				resType = divide(type);
 				break;
 			}
 		}
+		return resType;
 	}
 
-	static void firstTerm() throws IOException {
-		firstFactor();
-		term1();
+	static Type firstTerm() throws IOException {
+
+		Type fristType = firstFactor();
+		Type secondType = term1(fristType);
+		return secondType;
 	}
 
-	static void firstFactor() throws IOException {
+	static Type firstFactor() throws IOException {
 		switch (look) {
 		case '+':
 			match('+');
-			factor();
-			break;
+			return factor();
 		case '-':
-			negFactor();
-			break;
+			return negFactor();
 		default:
-			factor();
+			return factor();
 		}
 	}
 
-	static void expression() throws IOException {
-		firstTerm();
+	static Type expression() throws IOException {
+		Type firstType = firstTerm();
+		Type resType = firstType;
 		while (isAddOp(look)) {
-			push();
+			push(firstType);
 			switch (look) {
 			case '+':
-				add();
+				resType = add(firstType);
 				break;
 			case '-':
-				substract();
+				resType = substract(firstType);
 				break;
 			}
 		}
+		return resType;
+	}
+
+	static void defineHandleOverFlow() {
+		postLabel("handle_overflow:");
+		// Simply exit the program:
+		exit(1);
+	}
+
+	static void exit(int code) {
+		emitLn("pop	rbp");
+		emitLn("mov rax, " + code);
+		emitLn("ret");
 	}
 
 	public static void main(String[] args) throws IOException {
