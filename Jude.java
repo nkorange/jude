@@ -243,6 +243,8 @@ public class Jude {
 	static final long MAX_STACK_SIZE = 128;
 	static final String TEMP_FLOAT_VAR_NAME = "__1__";
 
+	static Stack<String> methodStack = new Stack<String>();
+
 	static Type findKeyword(String name) {
 
 		if (keywords.containsKey(name)) {
@@ -510,6 +512,10 @@ public class Jude {
 
 	static boolean isBool(String str) {
 		return str.equals("true") || str.equals("false");
+	}
+
+	static boolean isProcedure(String str) {
+		return methods.containsKey(str);
 	}
 
 	static boolean isChar(String str) {
@@ -943,6 +949,7 @@ public class Jude {
 
 	static void doMethod(String name, String type) throws IOException {
 
+		methodStack.push(name);
 		postMethodStartLabel(name);
 		doMethodParams(name);
 		match('{');
@@ -990,8 +997,21 @@ public class Jude {
 		cleanStack(n);
 	}
 
-	static void doReturn() {
-
+	static void doReturn() throws IOException {
+		String methodName = methodStack.pop();
+		compileInfo(methodName);
+		MethodInfo info = methods.get(methodName);
+		if (info.returnType != Type.VOID) {
+			Type expType = expression();
+			if (!isAssignValid(info.returnType, expType)) {
+				abort("procedure returned the wrong type " + expType);
+			}
+			if (info.returnType == Type.FLOAT) {
+				// As a convention, floating number is returned in xmm0:
+				emitLn("mov xmm0, [" + TEMP_FLOAT_VAR_NAME + "]");
+			}
+		}
+		match(';');
 	}
 
 	static int paramList(String methodName) throws IOException {
@@ -1025,7 +1045,7 @@ public class Jude {
 	}
 
 	static void pushParam(String methodName, int index) {
-		Type type = methods.get(methodName).params.get(index-1);
+		Type type = methods.get(methodName).params.get(index - 1);
 		if (isIntType(type)) {
 			pushIntParam(type, intParamIndex(methodName, index));
 		} else if (type == Type.FLOAT) {
@@ -1033,7 +1053,7 @@ public class Jude {
 		}
 	}
 
-	//RDI, RSI, RDX, RCX, R8, and R9.
+	// RDI, RSI, RDX, RCX, R8, and R9.
 	static void pushIntParam(Type type, int index) {
 
 		if (index > 6) {
@@ -1067,7 +1087,7 @@ public class Jude {
 		if (index > 8) {
 			emitLn("push qword [" + TEMP_FLOAT_VAR_NAME + "]");
 		} else {
-			emitLn("mov mm" + (index-1) + ", [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("mov mm" + (index - 1) + ", [" + TEMP_FLOAT_VAR_NAME + "]");
 		}
 	}
 
@@ -1293,6 +1313,7 @@ public class Jude {
 				break;
 			case PROC:
 				callMethod(word);
+				match(';');
 				break;
 			case RETURN:
 				doReturn();
@@ -1555,7 +1576,11 @@ public class Jude {
 			if (isBool(token)) {
 				return loadBool(token);
 			}
-			// TODO add procedure name
+			// add procedure name
+			if (isProcedure(token)) {
+				callMethod(token);
+				return methods.get(token).returnType;
+			}
 			return loadVar(token);
 		} else if (isNum(String.valueOf(look))) {
 			return loadConst();
@@ -1886,7 +1911,7 @@ public class Jude {
 	}
 
 	static void defineHandleOverFlow() {
-		postLabel("handle_overflow:");
+		postLabel("handle_overflow");
 		// Simply exit the program:
 		exit(1);
 	}
