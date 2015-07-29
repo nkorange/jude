@@ -1,5 +1,7 @@
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -60,27 +62,53 @@ import java.util.Map;
  * http://www.cwde.de/
  * <p>
  * http://stackoverflow.com/questions/9072922/nasm-idiv-a-negative-value
+ * <p>
+ * http://cs.lmu.edu/~ray/notes/nasmtutorial/ OSX program sample
+ * <p>
+ * http://www.website.masmforum.com/tutorials/fptute/fpuchap5.htm
+ * <p>
+ * http://www.csee.umbc.edu/courses/undergraduate/CMSC313/fall04/burt_katz/
+ * lectures/Lect12/floatingpoint.html
  * 
  * <pre>
  * global _main
- * 
+ * extern _printf
+ * default rel
  * section .text
  * 
  * _main:
- *     mov rax, 0x2000004
- *     mov rdi, 1
- *     lea rsi, [rel msg]
- *     mov rdx, msg.len
- *     syscall
+ * ;       mov rax, __float64__(111.2222)
+ * ;       fld qword [rax]
+ *         mov rax, 20
  * 
- *     mov rax, 0x2000001
- *     mov rdi, 0
- *     syscall
+ *         push rax
+ *         lea rdi, [message]
+ *         mov rsi, rax
+ *         mov rax,0
+ *         call _printf
+ * ;       fld qword [a]
+ * ;       mov qword [b], __float32__(1.12)
+ * ;       fadd qword [b]
+ * 
+ * ;       mov rax, [a]
+ * ;       fld qword [rax]
+ * ;       fadd qword [rax]
+ * ;       fstp qword [rax]
+ *         mov rax, 0x2000004
+ *         mov rdi, 1
+ *         lea rsi, [rel msg]
+ *         mov rdx, msg.len
+ *         syscall
+ * 
+ *         mov rax, 0x2000001
+ *         mov rdi, 0
+ *         syscall
  * 
  * section .data
  * 
- * msg:    db  "Hello, World!", 10
- * .len:   equ $ - msg
+ *  msg:    db  "Hello, World!", 10
+ *  .len:   equ $ - msg
+ * message: db "Register = %08d", 10, 0
  * </pre>
  * 
  * <h2>Assignment</h2>
@@ -93,6 +121,10 @@ import java.util.Map;
  * < byte | char | short | int | long >
  * </pre>
  * 
+ * <h2>Floating type</h2>
+ * 
+ * About floating type there are many problems deserving careful consideration.
+ * 
  * @author zpf.073@gmail.com
  *
  */
@@ -102,6 +134,7 @@ public class Jude {
 	static final char CR = '\r';
 	static final char LF = '\n';
 	static final char BLANK = ' ';
+	static final char POINT = '.';
 
 	static char look;
 
@@ -117,16 +150,20 @@ public class Jude {
 
 	static Map<String, ParamInfo> localVariables = new HashMap<String, ParamInfo>();
 
-	static Map<String, String> methods = new HashMap<String, String>();
+	static Map<String, MethodInfo> methods = new HashMap<String, MethodInfo>();
 
 	static Map<String, ParamInfo> params = new HashMap<String, ParamInfo>();
 
-	static int currentOffset = 8;
+	static int indexInt = 0;
+	static int indexFloat = 0;
+
+	static final int INITIAL_PARAM_OFFSET = 8;
+	static int currentOffset = 0;
 
 	// static Map<String, Integer> names = new HashMap<String, Integer>();
 
 	static enum Type {
-		VOID, BOOL, CHAR, BYTE, SHORT, INT, LONG, IF, ELSE, WHILE, FOR, IN, AS, SWITCH, CASE, CLASS,
+		VOID, BOOL, CHAR, BYTE, SHORT, INT, FLOAT, LONG, NON_FLOAT, IF, ELSE, WHILE, FOR, IN, AS, SWITCH, CASE, CLASS,
 
 		NONE, END, VAR, PROC, RETURN
 	};
@@ -135,6 +172,14 @@ public class Jude {
 		int offset;
 		int size;
 		Type type;
+		int index;
+	}
+
+	static class MethodInfo {
+		String name;
+		Type returnType;
+		int paramCount;
+		List<Type> params;
 	}
 
 	/**
@@ -147,6 +192,7 @@ public class Jude {
 	public static final String SHORT = "short";
 	public static final String BOOL = "bool";
 	public static final String CHAR = "char";
+	public static final String FLOAT = "float";
 
 	public static final String IF = "if";
 	public static final String ELSE = "else";
@@ -165,6 +211,7 @@ public class Jude {
 		keywords = new HashMap<String, Type>();
 		keywords.put(VOID, Type.VOID);
 		keywords.put(INT, Type.INT);
+		keywords.put(FLOAT, Type.FLOAT);
 		keywords.put(LONG, Type.LONG);
 		keywords.put(BYTE, Type.BYTE);
 		keywords.put(SHORT, Type.SHORT);
@@ -190,9 +237,11 @@ public class Jude {
 		types.put(SHORT, Type.SHORT);
 		types.put(BOOL, Type.BOOL);
 		types.put(CHAR, Type.CHAR);
+		types.put(FLOAT, Type.FLOAT);
 	}
 
 	static final long MAX_STACK_SIZE = 128;
+	static final String TEMP_FLOAT_VAR_NAME = "__1__";
 
 	static Type findKeyword(String name) {
 
@@ -226,7 +275,11 @@ public class Jude {
 	}
 
 	static void compileInfo(Object s) {
-		System.out.println("[Jude] " + s);
+		System.out.println("[info] " + s);
+	}
+
+	static void compileWarn(Object s) {
+		System.out.println("[warn] " + s);
 	}
 
 	static void postLabel(String l) {
@@ -234,7 +287,7 @@ public class Jude {
 	}
 
 	static void postMethodStartLabel(String name) {
-		System.out.println("start_" + name + ":");
+		System.out.println(name + ":");
 	}
 
 	static void postMethodEndLabel(String name) {
@@ -307,7 +360,27 @@ public class Jude {
 		case INT:
 			return "eax";
 		case LONG:
+		case FLOAT:
 			return "rax";
+		default:
+			abort("unknown type:" + type);
+		}
+		return null;
+	}
+
+	static String toAsmType(Type type) {
+		switch (type) {
+		case BOOL:
+		case BYTE:
+		case CHAR:
+			return "byte";
+		case SHORT:
+			return "word";
+		case INT:
+			return "dword";
+		case LONG:
+		case FLOAT:
+			return "qword";
 		default:
 			abort("unknown type:" + type);
 		}
@@ -323,7 +396,13 @@ public class Jude {
 	}
 
 	static void defineMethod(String name, String type) {
-		methods.put(name, type);
+
+		MethodInfo info = new MethodInfo();
+		info.name = name;
+		info.returnType = toType(type);
+		info.paramCount = 0;
+		info.params = new ArrayList<Type>();
+		methods.put(name, info);
 	}
 
 	static void error(String s) {
@@ -355,9 +434,8 @@ public class Jude {
 
 	static char getAChar() throws IOException {
 		match('\'');
-		
+
 		char c = look;
-		compileInfo(c);
 		getChar();
 		match('\'');
 		return c;
@@ -374,6 +452,7 @@ public class Jude {
 		case INT:
 			return "dd";
 		case LONG:
+		case FLOAT:
 			return "dq";
 		default:
 			abort("illegal type:" + varType);
@@ -387,6 +466,10 @@ public class Jude {
 
 	static int getParamOffset(String name) {
 		return params.get(name).offset;
+	}
+
+	static int getParamIndex(String name) {
+		return params.get(name).index;
 	}
 
 	static String defaultValue(Type varType) {
@@ -523,7 +606,9 @@ public class Jude {
 		case SHORT:
 		case INT:
 		case LONG:
-			return String.valueOf(getNum());
+			return String.valueOf(getIntegerNum());
+		case FLOAT:
+			return String.valueOf(getFloatNum());
 		default:
 			abort("unknown type:" + type);
 		}
@@ -531,7 +616,28 @@ public class Jude {
 
 	}
 
-	static int getNum() throws IOException {
+	static String getNum() throws IOException {
+		String val = "";
+		int pointCount = 0;
+		newLine();
+		if (!isDigit(look)) {
+			expected("Integer");
+		}
+		while (isDigit(look) || (look == POINT && pointCount <= 1)) {
+			if (look == POINT) {
+				pointCount++;
+			}
+			val += look;
+			getChar();
+		}
+		if (pointCount > 1) {
+			abort("more than one '.' found");
+		}
+		skipWhite();
+		return val;
+	}
+
+	static int getIntegerNum() throws IOException {
 		int val = 0;
 		newLine();
 		if (!isDigit(look)) {
@@ -545,11 +651,55 @@ public class Jude {
 		return val;
 	}
 
+	static boolean isIntType(Type type) {
+		return type == Type.BYTE || type == Type.SHORT || type == Type.INT
+				|| type == Type.LONG || type == Type.BOOL || type == Type.CHAR;
+	}
+
+	/**
+	 * Get a float number from a string.
+	 * <p>
+	 * Legal float number format:<br>
+	 * <code>5, 5.0</code>
+	 * <p>
+	 * Illegal float numbers: <br>
+	 * <code>.5, 5.</code>(they are legal in Java language)
+	 * 
+	 * @return
+	 * @throws IOException
+	 */
+	static double getFloatNum() throws IOException {
+
+		String val = "";
+		int pointCount = 0;
+		newLine();
+		if (!isDigit(look)) {
+			expected("Integer");
+		}
+		while (isDigit(look) || (look == POINT && pointCount <= 1)) {
+			if (look == POINT) {
+				pointCount++;
+			}
+			val += look;
+			getChar();
+		}
+		if (pointCount > 1) {
+			abort("more than one '.' found");
+		}
+		skipWhite();
+
+		return Double.parseDouble(val);
+	}
+
+	static boolean isFloat(String num) {
+		return num.contains("" + POINT);
+	}
+
 	static String getToken() throws IOException {
 		newLine();
 		String str = "";
 		if (isNum(String.valueOf(look))) {
-			return String.valueOf(getNum());
+			return String.valueOf(getFloatNum());
 		}
 
 		if (isName(String.valueOf(look))) {
@@ -608,6 +758,7 @@ public class Jude {
 		case INT:
 			return 4;
 		case LONG:
+		case FLOAT:
 			return 8;
 		default:
 			abort("Invalid Type:" + type);
@@ -632,7 +783,7 @@ public class Jude {
 	static void program() throws IOException {
 
 		emitLn("section .text");
-		emitLn("global start_main");
+		emitLn("global main");
 
 		// Predefine some procedures and constants:
 		defineHandleOverFlow();
@@ -657,6 +808,7 @@ public class Jude {
 			case LONG:
 			case CHAR:
 			case SHORT:
+			case FLOAT:
 				doMethod();
 				break;
 			case CLASS:
@@ -675,6 +827,7 @@ public class Jude {
 
 		boolean endOfDecl = false;
 		emitLn("section .data");
+		predefineGlobalVars();
 		while (isKeyword(token)) {
 			switch (keyType) {
 			case INT:
@@ -683,6 +836,7 @@ public class Jude {
 			case LONG:
 			case CHAR:
 			case SHORT:
+			case FLOAT:
 			case VOID:
 				endOfDecl = DeclVar();
 				if (!endOfDecl) {
@@ -698,6 +852,12 @@ public class Jude {
 		}
 	}
 
+	// Some predefined variables:
+	static void predefineGlobalVars() {
+		// Used for temporary floating number:
+		emitLn(TEMP_FLOAT_VAR_NAME + ":	dq	1.0");
+	}
+
 	static void doDeclVar(String name, String type) throws IOException {
 		allocaGlobalVar(name, type);
 	}
@@ -709,7 +869,8 @@ public class Jude {
 		if (look == '=') {
 			match('=');
 			// get the initial value:
-			// TODO let's limit here that assignment is not permitted:
+			// TODO let's limit that assignment is not permitted here for global
+			// variables:
 			varValue = getValue(toType(type));
 		}
 
@@ -724,27 +885,32 @@ public class Jude {
 
 	}
 
-	static boolean isAssignValid(Type type, String value) {
+	static boolean isAssignValid(Type type, Type expType) {
 		switch (type) {
 		case BYTE:
 		case SHORT:
 		case INT:
 		case LONG:
-			if (!isNum(value)) {
+			if (expType != Type.BYTE && expType != Type.SHORT
+					&& expType != Type.INT && expType != Type.LONG) {
 				return false;
+			}
+			if (expType != type) {
+				compileWarn("Type " + expType + " is converted to " + type);
 			}
 			break;
 		case BOOL:
-			if (!isBool(value)) {
-				return false;
-			}
-			value = boolNumeric(value);
-			break;
 		case CHAR:
-			if (!isChar(value)) {
+			if (expType != type) {
 				return false;
 			}
 			break;
+		case FLOAT:
+			if (expType != Type.BYTE && expType != Type.SHORT
+					&& expType != Type.INT && expType != Type.LONG
+					&& expType != Type.FLOAT) {
+				return false;
+			}
 		default:
 			abort("undefined type:" + type);
 			break;
@@ -778,7 +944,7 @@ public class Jude {
 	static void doMethod(String name, String type) throws IOException {
 
 		postMethodStartLabel(name);
-		storeMethodParams();
+		doMethodParams(name);
 		match('{');
 		int offset = 0;
 		String varType = getToken();
@@ -818,8 +984,9 @@ public class Jude {
 	}
 
 	static void callMethod(String name) throws IOException {
-		int n = paramList();
+		int n = paramList(name);
 		call(name);
+		
 		cleanStack(n);
 	}
 
@@ -827,25 +994,113 @@ public class Jude {
 
 	}
 
-	static int paramList() throws IOException {
+	static int paramList(String methodName) throws IOException {
+
 		int n = 0;
 		match('(');
 		if (look != ')') {
-			param();
+			param(methodName, n);
+
 			n++;
 			while (look == ',') {
 				match(',');
-				param();
+				param(methodName, n);
 				n++;
 			}
 		}
 		match(')');
+		// check the count of parameters
+		if (n != methods.get(methodName).paramCount) {
+			abort("different arguments number from definition");
+		}
 		return 2 * n;
 	}
 
-	static void param() throws IOException {
+	static Type param(String methodName, int index) throws IOException {
 		Type expType = expression();
-		push(expType);
+		// Check the validity of parameter:
+		checkParam(methodName, expType, index);
+		pushParam(methodName, index + 1);
+		return expType;
+	}
+
+	static void pushParam(String methodName, int index) {
+		Type type = methods.get(methodName).params.get(index-1);
+		if (isIntType(type)) {
+			pushIntParam(type, intParamIndex(methodName, index));
+		} else if (type == Type.FLOAT) {
+			pushFloatParam(type, floatParamIndex(methodName, index));
+		}
+	}
+
+	//RDI, RSI, RDX, RCX, R8, and R9.
+	static void pushIntParam(Type type, int index) {
+
+		if (index > 6) {
+			emitLn("push rax");
+		} else {
+			switch (index) {
+			case 1:
+				emitLn("mov rdi, rax");
+				break;
+			case 2:
+				emitLn("mov rsi, rax");
+				break;
+			case 3:
+				emitLn("mov rdx, rax");
+				break;
+			case 4:
+				emitLn("mov rcx, rax");
+				break;
+			case 5:
+				emitLn("mov r8, rax");
+				break;
+			case 6:
+				emitLn("mov r9, rax");
+				break;
+			}
+		}
+	}
+
+	static void pushFloatParam(Type type, int index) {
+
+		if (index > 8) {
+			emitLn("push qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		} else {
+			emitLn("mov mm" + (index-1) + ", [" + TEMP_FLOAT_VAR_NAME + "]");
+		}
+	}
+
+	static int intParamIndex(String methodName, int index) {
+		int i = 0, n = 0;
+		while (i < index) {
+			if (isIntType(methods.get(methodName).params.get(i))) {
+				n++;
+			}
+			i++;
+		}
+		return n;
+	}
+
+	static int floatParamIndex(String methodName, int index) {
+		int i = 0, n = 0;
+		while (i < index) {
+			if (methods.get(methodName).params.get(i) == Type.FLOAT) {
+				n++;
+			}
+			i++;
+		}
+		return n;
+	}
+
+	static void checkParam(String methodName, Type expType, int index) {
+		MethodInfo info = methods.get(methodName);
+		if (info.paramCount <= index) {
+			abort("too many arguments");
+		}
+		if (!isAssignValid(info.params.get(index), expType)) {
+			abort("Cannot assign " + expType + " to " + info.params.get(index));
+		}
 	}
 
 	static void cleanStack(int n) {
@@ -859,26 +1114,44 @@ public class Jude {
 		emitLn("call " + name);
 	}
 
-	static void storeMethodParams() throws IOException {
+	static void doMethodParams(String name) throws IOException {
+
+		clearParamIndex();
 		match('(');
 		if (look != ')') {
-			formalParam();
+			formalParam(name);
 			while (look == ',') {
 				match(',');
-				formalParam();
+				formalParam(name);
 			}
 		}
 		match(')');
 		newLine();
 	}
 
-	static void formalParam() throws IOException {
-		String type = getName();
-		String name = getName();
-		addParam(type, name);
+	static void clearParamIndex() {
+		indexInt = 0;
+		indexFloat = 0;
 	}
 
-	static void addParam(String type, String name) {
+	static void formalParam(String methodName) throws IOException {
+		String type = getName();
+		String name = getName();
+
+		if (toType(type) == Type.FLOAT) {
+			indexFloat++;
+		} else {
+			indexInt++;
+		}
+
+		addParam(methodName, type, name);
+	}
+
+	// Note that the parameter storage follows C language convention. First six
+	// integer arguments are passed in RDI, RSI, RDX, RCX, R8, and R9.
+	// Additional arguments are pushed to the stack. First eight arguments are
+	// passed in xmm0 to xmm7.
+	static void addParam(String methodName, String type, String name) {
 		if (isParam(name)) {
 			duplicate("param:" + name);
 		}
@@ -886,7 +1159,7 @@ public class Jude {
 			abort("expected valid type, but found " + type);
 		}
 		int size = sizeOfType(toType(type));
-		doAddParam(name, size);
+		doAddParam(methodName, name, size, toType(type));
 
 	}
 
@@ -898,12 +1171,42 @@ public class Jude {
 		return params.get(name).type;
 	}
 
-	static void doAddParam(String name, int size) {
+	static void doAddParam(String methodName, String name, int size, Type type) {
+
+		methods.get(methodName).paramCount++;
+		methods.get(methodName).params.add(type);
+
+		if (type == Type.FLOAT) {
+			doAddFloatParam(name, size, type);
+		} else {
+			doAddIntParam(name, size, type);
+		}
+	}
+
+	// For integer parameter, only 7th+ parameters have offsets:
+	static void doAddIntParam(String name, int size, Type type) {
 		ParamInfo info = new ParamInfo();
 		info.offset = currentOffset;
 		info.size = size;
+		info.type = type;
+		info.index = indexInt;
 		params.put(name, info);
-		currentOffset += size;
+		if (indexInt >= 7) {
+			currentOffset += size;
+		}
+	}
+
+	// For floating parameter, only 9th+ parameters have offsets:
+	static void doAddFloatParam(String name, int size, Type type) {
+		ParamInfo info = new ParamInfo();
+		info.offset = currentOffset;
+		info.size = size;
+		info.type = type;
+		info.index = indexFloat;
+		params.put(name, info);
+		if (indexFloat >= 9) {
+			currentOffset += size;
+		}
 	}
 
 	static int doStoreLocalVar(Type type, int offset) throws IOException {
@@ -920,8 +1223,7 @@ public class Jude {
 
 			if (look == '=') {
 				match('=');
-				doAssignment(type);
-				store(type, name);
+				storeVar(type, name, doAssignment(type));
 			}
 
 			if (look == ',') {
@@ -942,8 +1244,6 @@ public class Jude {
 
 		return offset;
 	}
-
-
 
 	static void initLocalVar(Type type, String name) {
 		// TODO
@@ -1041,13 +1341,34 @@ public class Jude {
 
 	}
 
-	static Type loadConst(int n) {
-		// By default rax accepts a 32-bit number:
-		emit("mov rax, ");
-		System.out.println(n);
+	static Type loadConst() throws IOException {
+		String var = getNum();
+		if (isFloat(var)) {
+			return loadFloatConst(Double.parseDouble(var));
+		} else {
+			return loadIntegerConst(Integer.parseInt(var));
+		}
+	}
 
-		// Temporarily only int constants:
+	static Type loadNegConst() throws IOException {
+		double var = -getFloatNum();
+		if (isFloat(String.valueOf(var))) {
+			return loadFloatConst(var);
+		} else {
+			return loadIntegerConst((int) var);
+		}
+	}
+
+	static Type loadIntegerConst(int n) {
+		// By default rax accepts a 32-bit number:
+		emitLn("mov rax, " + n);
 		return Type.INT;
+	}
+
+	static Type loadFloatConst(double d) {
+		emitLn("mov qword [" + TEMP_FLOAT_VAR_NAME + "], __float32__(" + d
+				+ ")");
+		return Type.FLOAT;
 	}
 
 	// Treat char as common constant number:
@@ -1068,15 +1389,14 @@ public class Jude {
 	static void assignment(Type type, String name) throws IOException {
 
 		match('=');
-		doAssignment(type);
-		store(type, name);
+		storeVar(type, name, doAssignment(type));
 		match(';');
 	}
-	
-	static void doAssignment(Type type) throws IOException {
+
+	static Type doAssignment(Type type) throws IOException {
 		Type expType = expression();
 		// Determine if expType and type is compatible:
-		if ((type != expType) && (expType == Type.BOOL)) {
+		if (!isAssignValid(type, expType)) {
 
 			// This allows max flexibility in assignment, which also apparently
 			// brings the risk of overflowing and confuse. But I believe if
@@ -1084,24 +1404,95 @@ public class Jude {
 			// most straight and natural way.
 			abort("invalid assignment from " + expType + " to " + type);
 		}
+		return expType;
 	}
 
-	static void store(Type type, String name) {
+	static void storeVar(Type type, String name, Type expType) {
 
-		// store with the correct register:
+		if (type == Type.FLOAT) {
+
+			if (expType == Type.FLOAT) {
+				emitLn("fld qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			} else {
+				// An integer-to-float assignment:
+				emitLn("fild qword [rax]");
+			}
+			if (isDefinedGlobalVar(name)) {
+				emitLn("fstp qword [" + name + "]");
+			} else if (isDefinedLocalVar(name)) {
+				emitLn("fstp qword [rbp-" + getLocalVarOffset(name) + "]");
+			} else if (isParam(name)) {
+				storeFloatParam(name);
+			} else {
+				abort("expected legal variable, but found " + name);
+			}
+		} else {
+			// store with the correct register:
+			String reg = regOfType(typeOf(name));
+			if (isDefinedGlobalVar(name)) {
+				emitLn("mov [" + name + "], " + reg);
+			} else if (isDefinedLocalVar(name)) {
+				emitLn("mov [rbp-" + getLocalVarOffset(name) + "], " + reg);
+			} else if (isParam(name)) {
+				storeIntParam(name);
+			} else {
+				abort("expected legal variable, but found " + name);
+			}
+		}
+	}
+
+	static void storeParam(String name) {
+		if (typeOf(name) == Type.FLOAT) {
+			storeFloatParam(name);
+		} else {
+			storeIntParam(name);
+		}
+	}
+
+	static void storeIntParam(String name) {
 		String reg = regOfType(typeOf(name));
-		if (isDefinedGlobalVar(name)) {
-			emitLn("mov [" + name + "], " + reg);
-		} else if (isDefinedLocalVar(name)) {
-			emitLn("mov [rbp-" + getLocalVarOffset(name) + "], " + reg);
-		} else if (isParam(name)) {
+		if (getParamIndex(name) > 6) {
 			emitLn("mov [rbp+" + getParamOffset(name) + "], " + reg);
 		} else {
-			abort("expected legal variable, but found " + name);
+			switch (getParamIndex(name)) {
+			case 1:
+				emitLn("mov rdi, " + reg);
+				break;
+			case 2:
+				emitLn("mov rsi, " + reg);
+				break;
+			case 3:
+				emitLn("mov rdx, " + reg);
+				break;
+			case 4:
+				emitLn("mov rcx, " + reg);
+				break;
+			case 5:
+				emitLn("mov r8, " + reg);
+				break;
+			case 6:
+				emitLn("mov r9, " + reg);
+				break;
+
+			}
+		}
+	}
+
+	static void storeFloatParam(String name) {
+
+		if (getParamIndex(name) > 8) {
+			emitLn("fstp qword [rbp+" + getParamOffset(name) + "]");
+		} else {
+			emitLn("fstp qword [mm" + (getParamIndex(name) - 1) + "]");
 		}
 	}
 
 	static Type loadVar(String name) {
+
+		if (typeOf(name) == Type.FLOAT) {
+			return loadFloatVar(name);
+		}
+
 		// have to use the type info of the variable:
 		emitLn("mov rax, 0"); // Clear all bits of rax
 
@@ -1132,6 +1523,24 @@ public class Jude {
 		return typeOf(name);
 	}
 
+	static Type loadFloatVar(String name) {
+
+		if (isDefinedGlobalVar(name)) {
+
+			emitLn("fld qword [" + name + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		} else if (isDefinedLocalVar(name)) {
+			emitLn("fld qword [rbp-" + getLocalVarOffset(name) + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		} else if (isParam(name)) {
+			emitLn("fld qword [rbp+" + getParamOffset(name) + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		} else {
+			abort("expected legal variable, but found " + name);
+		}
+		return Type.FLOAT;
+	}
+
 	static Type factor() throws IOException {
 		if (look == '(') {
 			match('(');
@@ -1139,17 +1548,17 @@ public class Jude {
 			match(')');
 			return res;
 		} else if (isAlpha(look)) {
-			String tmp = getName();
+			getName();
 			// Don't forget bool value is also a non-number string. Usually a
 			// bool assignment is invalid in an expression, but we will just
-			// leave the judgment to later program.
-			if (isBool(tmp)) {
-				return loadBool(tmp);
+			// leave the judgment to subsequent program.
+			if (isBool(token)) {
+				return loadBool(token);
 			}
-
+			// TODO add procedure name
 			return loadVar(token);
 		} else if (isNum(String.valueOf(look))) {
-			return loadConst(getNum());
+			return loadConst();
 		} else if (look == '\'') {
 			return loadChar(getAChar());
 		} else {
@@ -1161,7 +1570,7 @@ public class Jude {
 		Type resType;
 		match('-');
 		if (isDigit(look)) {
-			resType = loadConst(-getNum());
+			resType = loadNegConst();
 		} else {
 			resType = factor();
 			negate();
@@ -1175,16 +1584,28 @@ public class Jude {
 	}
 
 	// push to the stack ignoring the type of the value because we have sign
-	// extended the value to 64-bit
+	// extended the value to 64-bit.
+	// For floating value, we use a predefined global variable to act as [rax]
+	// in integer mode.
 	static void push(Type type) {
-		emitLn("push rax");
+
+		if (type == Type.FLOAT) {
+			emitLn("fld qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		} else {
+			emitLn("push rax");
+		}
 	}
 
+	// Not used currently:
 	static void pop() {
 		emitLn("pop rax");
 	}
 
 	static Type popAdd(Type firstType, Type secondType) {
+
+		if (firstType == Type.FLOAT || secondType == Type.FLOAT) {
+			return popAddFloat(firstType, secondType);
+		}
 
 		// If the add operation is invalid:
 		if (!isLegalOperation(firstType, secondType)) {
@@ -1207,11 +1628,38 @@ public class Jude {
 		}
 	}
 
+	static Type popAddFloat(Type firstType, Type secondType) {
+
+		if (firstType == Type.FLOAT && secondType == Type.FLOAT) {
+			emitLn("fadd qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		} else if (firstType == Type.FLOAT) {
+			// second type is integer:
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fild qword [rax]");
+			emitLn("fadd qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		} else {
+			// first type is integer:
+			emitLn("pop rax");
+			emitLn("fild qword [rax]");
+			emitLn("fadd qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		}
+
+		emitLn("jo handle_overflow");
+		return Type.FLOAT;
+	}
+
 	static Type popSub(Type firstType, Type secondType) {
 		// If the add operation is invalid:
 		if (!isLegalOperation(firstType, secondType)) {
 			abort("invalid operation between " + firstType + " and "
 					+ secondType);
+		}
+
+		if (firstType == Type.FLOAT || secondType == Type.FLOAT) {
+			return popSubFloat(firstType, secondType);
 		}
 
 		emitLn("pop rbx");
@@ -1230,12 +1678,39 @@ public class Jude {
 		}
 	}
 
+	static Type popSubFloat(Type firstType, Type secondType) {
+
+		if (firstType == Type.FLOAT && secondType == Type.FLOAT) {
+			emitLn("fsub qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		} else if (firstType == Type.FLOAT) {
+			// second type is integer:
+			emitLn("fild qword [rax]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fsub qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		} else {
+			// first type is integer:
+			emitLn("pop rax");
+			emitLn("fild qword [rax]");
+			emitLn("fsub qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		}
+
+		emitLn("jo handle_overflow");
+		return Type.FLOAT;
+	}
+
 	static Type popMul(Type firstType, Type secondType) {
 
 		// If the add operation is invalid:
 		if (!isLegalOperation(firstType, secondType)) {
 			abort("invalid operation between " + firstType + " and "
 					+ secondType);
+		}
+
+		if (firstType == Type.FLOAT || secondType == Type.FLOAT) {
+			return popMulFloat(firstType, secondType);
 		}
 
 		emitLn("pop rbx");
@@ -1250,12 +1725,39 @@ public class Jude {
 		}
 	}
 
+	static Type popMulFloat(Type firstType, Type secondType) {
+
+		if (firstType == Type.FLOAT && secondType == Type.FLOAT) {
+			emitLn("fmul qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		} else if (firstType == Type.FLOAT) {
+			// second type is integer:
+			emitLn("fild qword [rax]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fmul qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		} else {
+			// first type is integer:
+			emitLn("pop rax");
+			emitLn("fild qword [rax]");
+			emitLn("fmul qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		}
+
+		emitLn("jo handle_overflow");
+		return Type.FLOAT;
+	}
+
 	static Type popDiv(Type firstType, Type secondType) {
 
 		// If the add operation is invalid:
 		if (!isLegalOperation(firstType, secondType)) {
 			abort("invalid operation between " + firstType + " and "
 					+ secondType);
+		}
+
+		if (firstType == Type.FLOAT || secondType == Type.FLOAT) {
+			return popDivFloat(firstType, secondType);
 		}
 
 		// For integer numbers, if the dividend is smaller than divisor, the
@@ -1265,6 +1767,28 @@ public class Jude {
 		emitLn("idiv rbx");
 		emitLn("jo handle_overflow");
 		return firstType;
+	}
+
+	static Type popDivFloat(Type firstType, Type secondType) {
+		if (firstType == Type.FLOAT && secondType == Type.FLOAT) {
+			emitLn("fdiv qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		} else if (firstType == Type.FLOAT) {
+			// second type is integer:
+			emitLn("fild qword [rax]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fdiv qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		} else {
+			// first type is integer:
+			emitLn("pop rax");
+			emitLn("fild qword [rax]");
+			emitLn("fdiv qword [" + TEMP_FLOAT_VAR_NAME + "]");
+			emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+		}
+
+		emitLn("jo handle_overflow");
+		return Type.FLOAT;
 	}
 
 	static void popMod() {
@@ -1311,6 +1835,7 @@ public class Jude {
 
 		Type resType = type;
 		while (isMulOp(look)) {
+
 			push(type);
 			switch (look) {
 			case '*':
