@@ -292,7 +292,7 @@ public class Jude extends Helper {
             return keywords.get(name);
         }
 
-        if (isLegalVar(name)) {
+        if (isDefinedVar(name)) {
             return Type.VAR;
         }
 
@@ -364,9 +364,14 @@ public class Jude extends Helper {
         return "return".equals(name);
     }
 
-    static boolean isLegalVar(String name) {
+    static boolean isDefinedVar(String name) {
         return isDefinedGlobalVar(name) || isDefinedLocalVar(name)
                 || isParam(name);
+    }
+
+    static boolean isDefinedArray(String name) {
+        // TODO
+        return false;
     }
 
     static boolean isLegalOperation(Type firstType, Type secondType) {
@@ -550,6 +555,7 @@ public class Jude extends Helper {
         }
     }
 
+    // Only integer is permitted here:
     static boolean isNum(String str) {
         try {
             Long.parseLong(str);
@@ -838,6 +844,19 @@ public class Jude extends Helper {
         } else {
             expected(String.valueOf(c));
         }
+    }
+
+    static void match(String s) throws IOException {
+        newLine();
+        int index = 0;
+        while (index < s.length() && look == s.charAt(index)) {
+            getChar();
+            index++;
+        }
+        if (index != s.length()) {
+            expected(s);
+        }
+        skipWhite();
     }
 
     static void scan() throws IOException {
@@ -1174,12 +1193,13 @@ public class Jude extends Helper {
 
     /**
      * <code>
-     * for (i <- 0:2:10) {
+     * int i = 0;
+     * for (i <- 0:10) {
      * // code block
      * }
      * int array[10];
-     * for (int i in array) {
-     *     // code block
+     * for (i <- array) {
+     * // code block
      * }
      * </code>
      *
@@ -1187,11 +1207,59 @@ public class Jude extends Helper {
      */
     static void doFor() throws IOException {
         match('(');
-        int i;
-        for (System.out.print("sss"), doWhile(), i = 2, i = 4, i = 0; i < 10; i++) {
+        String var = getName();
+        if (!isDefinedVar(var)) {
+            abort("not a legal variable:" + var);
+        }
+        match("<-");
+        getToken();
+        if (isNum(token)) {
+            emitLn("mov rbx, " + token);
+        } else if (isDefinedVar(token)) {
+            if (isDefinedArray(token)) {
+                // TODO process when token is an array
 
+            } else {
+                loadVar(token);
+                emitLn("mov rbx, rax");
+            }
+        } else {
+            expected("const integer number or variable");
         }
 
+        match(':');
+        getToken();
+        if (isNum(token)) {
+            emitLn("mov rax, " + token);
+        } else if (isDefinedVar(token)) {
+            if (isDefinedArray(token)) {
+                abort("array is invalid here");
+            } else {
+                loadVar(token);
+            }
+        } else {
+            expected("const integer number or variable");
+        }
+
+        String startFor = newLabel();
+        String endFor = newLabel();
+        postLabel(startFor);
+        emitLn("cmp rbx, rax");
+        emitLn("mov rax, 0");
+        emitLn("setne al");
+        emitLn("cmp al, 0");
+        emitLn("jne " + endFor);
+        emitLn("push rax");
+        emitLn("push rbx");
+        match(')');
+        match('{');
+        block();
+        match('}');
+        emitLn("pop rbx");
+        emitLn("pop rax");
+        emitLn("add rbx, 1");
+        emitLn("jmp " + startFor);
+        postLabel(endFor);
     }
 
     /**
@@ -1538,7 +1606,9 @@ public class Jude extends Helper {
 
         keyType = findKeyword(word);
         //compileInfo(keyType);
+        token = word;
         while (keyType != Type.NONE) {
+            //compileInfo(token);
             switch (keyType) {
                 case IF:
                     doIf();
@@ -1559,10 +1629,10 @@ public class Jude extends Helper {
                     doCase();
                     break;
                 case VAR:
-                    assignment(typeOf(word), word);
+                    assignment(typeOf(token), token);
                     break;
                 case PROC:
-                    callMethod(word);
+                    callMethod(token);
                     match(';');
                     break;
                 case RETURN:
@@ -2244,7 +2314,7 @@ public class Jude extends Helper {
             }
         } else {*/
         relation();
-       // }
+        // }
     }
 
     static boolean getBoolean() throws IOException {
