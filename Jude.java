@@ -37,7 +37,7 @@ import java.util.Map;
  * 3. reference type <br>
  * 4. user defined type including List, Map, Structure, Class etc.<br>
  * 5. a statement starts with "(".<br>
- * 6. return in a block, even in a procedure.<br>
+ * 6. enum type.<br>
  * 7. overload of procedure.<br>
  * 8. floating type.<br>
  * 9. string type.
@@ -741,7 +741,7 @@ public class Jude extends Helper {
      * @return
      * @throws IOException
      */
-    static double getFloatNum() throws IOException {
+    static Object getFloatNum() throws IOException {
 
         String val = "";
         int pointCount = 0;
@@ -760,7 +760,9 @@ public class Jude extends Helper {
             abort("more than one '.' found");
         }
         skipWhite();
-
+        if (pointCount == 0) {
+            return Integer.parseInt(val);
+        }
         return Double.parseDouble(val);
     }
 
@@ -772,11 +774,17 @@ public class Jude extends Helper {
         newLine();
         String str = "";
         if (isNum(String.valueOf(look))) {
-            return String.valueOf(getFloatNum());
+            token = String.valueOf(getFloatNum());
+            return token;
         }
 
         if (isName(String.valueOf(look))) {
-            return getName();
+            token = getName();
+            return token;
+        }
+
+        if (look == '\'') {
+            return String.valueOf((int) getAChar());
         }
 
         str += look;
@@ -784,6 +792,31 @@ public class Jude extends Helper {
         token = str;
         return str;
 
+    }
+
+    static String getConst(Type type) throws IOException {
+        token = getToken();
+        if (!isConst(type, token)) {
+            abort("not a valid const: " + token + " of type: " + type);
+        }
+        return token;
+    }
+
+    static boolean isConst(Type type, String value) {
+        if (!isBool(token) && !isFloat(token) && !isNum(token)) {
+            return false;
+        }
+
+        if (isBool(token) && type != Type.BOOL) {
+            return false;
+        }
+        if (isFloat(token) && type != Type.FLOAT) {
+            return false;
+        }
+        if (isNum(token) && !isIntType(type) && type != Type.FLOAT) {
+            return false;
+        }
+        return true;
     }
 
     static String getRelOp() throws IOException {
@@ -1054,6 +1087,7 @@ public class Jude extends Helper {
                         && expType != Type.FLOAT) {
                     return false;
                 }
+                break;
             default:
                 abort("undefined type:" + type);
                 break;
@@ -1245,12 +1279,12 @@ public class Jude extends Helper {
         String endFor = newLabel();
         postLabel(startFor);
         emitLn("cmp rbx, rax");
+        emitLn("push rax");
+        emitLn("push rbx");
         emitLn("mov rax, 0");
         emitLn("setne al");
         emitLn("cmp al, 0");
         emitLn("jne " + endFor);
-        emitLn("push rax");
-        emitLn("push rbx");
         match(')');
         match('{');
         block();
@@ -1285,21 +1319,81 @@ public class Jude extends Helper {
     }
 
     /**
-     * <code>
-     * case(variable) {
-     * 1 ->
-     * block
-     * 2 =>
-     * block
-     * * ->
-     * block
-     * }
-     * </code>
+     * <pre>
+     *  case(variable) {
+     *      1 ->
+     *          block
+     *      2 =>
+     *          block
+     *      * ->
+     *          block
+     *  }
+     * </pre>
      * -> means break the case after block.
      * => means continue the case after block.
      */
-    static void doCase() {
+    static void doCase() throws IOException {
 
+        String value = null;
+        char c = 0;
+        match('(');
+        getName();
+        if (!isDefinedVar(token)) {
+            abort("need a variable here");
+        }
+        loadVar(token);
+        Type varType = typeOf(token);
+        if (varType == Type.FLOAT || varType == Type.BOOL) {
+            abort(varType + " is not allowed to be used in a case module.");
+        }
+        match(')');
+        match('{');
+        String endCase = newLabel();
+        String nextCase = newLabel();
+        newLine();
+        getToken();
+        while (!"}".equals(token) && ("*".equals(token) || isConst(varType, token))) {
+            newLine();
+            // Default case:
+            if ("*".equals(token)) {
+                c = '*';
+                match('*');
+            }
+
+            if (c != '*') {
+                emitLn("mov rbx, " + token);
+                emitLn("cmp rbx, rax");
+                emitLn("mov rax, 0");
+                emitLn("setne al");
+                emitLn("jne " + nextCase);
+            }
+            // Save the variable value:
+            emitLn("push rax");
+            // new line is not permitted here:
+            if (look == '=' || look == '-') {
+                c = look;
+                getChar();
+                if (look != '>') {
+                    abort("need >");
+                }
+                getChar();
+            } else {
+                abort("need => or ->, found: " + look);
+            }
+
+            block();
+            if (c == '-') {
+                emitLn("jmp " + endCase);
+            }
+            c = 0;
+            //compileInfo(token);
+            postLabel(nextCase);
+            nextCase = newLabel();
+            // pop the variable value again:
+            emitLn("pop rax");
+        }
+        match('}');
+        postLabel(endCase);
     }
 
     static void callMethod(String name) throws IOException {
@@ -1699,7 +1793,7 @@ public class Jude extends Helper {
     }
 
     static Type loadNegConst() throws IOException {
-        double var = -getFloatNum();
+        double var = -((Double) getFloatNum());
         if (isFloat(String.valueOf(var))) {
             return loadFloatConst(var);
         } else {
@@ -1891,6 +1985,7 @@ public class Jude extends Helper {
 
     static Type factor() throws IOException {
 
+        newLine();
         if (look == '(') {
             match('(');
             Type res = expression();
