@@ -124,9 +124,8 @@ import java.util.Map;
  * < byte | char | short | int | long >
  * </pre>
  * <p>
- * <h2>Floating type</h2>
- * <p>
- * About floating type there are many problems deserving careful consideration.
+ * <h2>Change log</h2>
+ * 2015-08-08   Start to support array type.
  *
  * @author zpf.073@gmail.com
  */
@@ -148,7 +147,7 @@ public class Jude extends Helper {
 
     static String lastType = null;
 
-    static Map<String, String> globalVariables = new HashMap<String, String>();
+    static Map<String, VarInfo> globalVariables = new HashMap<String, VarInfo>();
 
     static Map<String, ParamInfo> localVariables = new HashMap<String, ParamInfo>();
 
@@ -157,17 +156,17 @@ public class Jude extends Helper {
     static Map<String, ParamInfo> params = new HashMap<String, ParamInfo>();
 
     static int indexInt = 0;
+
     static int indexFloat = 0;
 
     static final int INITIAL_PARAM_OFFSET = 8;
-    static int currentOffset = 0;
 
-    // static Map<String, Integer> names = new HashMap<String, Integer>();
+    static int currentOffset = 0;
 
     static enum Type {
         VOID, BOOL, CHAR, BYTE, SHORT, INT, FLOAT, LONG, NON_FLOAT, IF, ELSE, ELIF, WHILE, FOR, IN, AS, CASE, CLASS,
 
-        NONE, END, VAR, PROC, RETURN
+        NONE, END, VAR, PROC, RETURN, ARRAY_BOOL, ARRAY_BYTE, ARRAY_CHAR, ARRAY_SHORT, ARRAY_INT, ARRAY_LONG
     }
 
     static enum Op {
@@ -187,6 +186,14 @@ public class Jude extends Helper {
         int paramCount;
         List<Type> params;
     }
+
+    static class VarInfo {
+        String name;
+        Type type;
+        int length;
+    }
+
+    static byte isLastVarArray = -1;
 
     /**
      * Keywords definition
@@ -276,7 +283,7 @@ public class Jude extends Helper {
         ops.put(NOT, Op.NOT);
     }
 
-    static final long MAX_STACK_SIZE = 128;
+    static final long MAX_STACK_SIZE = 12800;
     static final String TEMP_FLOAT_VAR_NAME = "__1__";
 
     static Stack<String> methodStack = new Stack<String>();
@@ -370,8 +377,29 @@ public class Jude extends Helper {
     }
 
     static boolean isDefinedArray(String name) {
-        // TODO
+        if (isDefinedGlobalVar(name)) {
+            return globalVariables.get(name).length > sizeOfType(globalVariables.get(name).type);
+        }
+        if (isDefinedLocalVar(name)) {
+            return localVariables.get(name).size > sizeOfType(localVariables.get(name).type);
+        }
+        if (isParam(name)) {
+            return params.get(name).size > sizeOfType(params.get(name).type);
+        }
         return false;
+    }
+
+    static int getArraySize(String name) {
+        if (isDefinedGlobalVar(name)) {
+            return globalVariables.get(name).length;
+        }
+        if (isDefinedLocalVar(name)) {
+            return localVariables.get(name).size;
+        }
+        if (isParam(name)) {
+            return params.get(name).size;
+        }
+        return 0;
     }
 
     static boolean isLegalOperation(Type firstType, Type secondType) {
@@ -395,11 +423,82 @@ public class Jude extends Helper {
     }
 
     static void defineGlobalVar(String name, String type) {
-        globalVariables.put(name, type);
+        VarInfo info = new VarInfo();
+        info.name = name;
+        info.type = toType(type);
+        info.length = sizeOfType(info.type);
+        if (isLastVarArray == 1 || isLastVarArray == -1) {
+            emitLn("section .data");
+            isLastVarArray = 0;
+        }
+        globalVariables.put(name, info);
+    }
+
+    static void defineGlobalArray(String name, String type) throws IOException {
+        match('[');
+        int size = getIntegerNum();
+        if (size <= 0) {
+            abort("array size should be positive number");
+        }
+        match(']');
+        VarInfo info = new VarInfo();
+        info.name = name;
+        info.type = toType(type);
+        info.length = sizeOfType(info.type) * size;
+        globalVariables.put(name, info);
+        if (isLastVarArray == 0 || isLastVarArray == -1) {
+            emitLn("section .bss");
+            isLastVarArray = 1;
+        }
+        switch (info.type) {
+            case BOOL:
+            case CHAR:
+            case BYTE:
+                emitLn(name + ":" + TAB + "resb" + TAB + size);
+                break;
+            case SHORT:
+                emitLn(name + ":" + TAB + "resw" + TAB + size);
+                break;
+            case INT:
+            case FLOAT:
+                emitLn(name + ":" + TAB + "resq" + TAB + size);
+                break;
+            case LONG:
+                emitLn(name + ":" + TAB + "rest" + TAB + size); // rest?
+                break;
+            default:
+                abort("unexpected type: " + info.type);
+        }
+        // New line if not permitted here:
+        if (look == '=') {
+            match('=');
+            match('{');
+            // The count of initial values should match exactly the size of array:
+            int i = 0;
+            while (i < size) {
+                getToken();
+                if (!isConst(info.type, token)) {
+                    abort("illegal const value:" + token + " of type:" + info.type);
+                }
+                if (info.type == Type.BOOL) {
+                    token = boolNumeric(token);
+                }
+                pushInitCodeLine(TAB + "mov [" + info.name + "+" + sizeOfType(info.type) + "*" + i + "], " + token);
+                i++;
+                if (i < size) {
+                    match(',');
+                }
+            }
+            if (i != size) {
+                abort("incorrect count of initial values (found " + i + ", expect " + size + ")");
+            }
+            match('}');
+        }
+        match(';');
     }
 
     static String getGlobalVarType(String name) {
-        return globalVariables.get(name);
+        return globalVariables.get(name).type.name();
     }
 
     static Type getLocalVarType(String name) {
@@ -458,11 +557,11 @@ public class Jude extends Helper {
         return null;
     }
 
-    static void defineLocalVar(String name, Type type, int offset) {
+    static void defineLocalVar(String name, Type type, int offset, int size) {
         ParamInfo info = new ParamInfo();
         info.offset = offset;
         info.type = type;
-        info.size = sizeOfType(type);
+        info.size = sizeOfType(type) * size;
         localVariables.put(name, info);
     }
 
@@ -712,7 +811,12 @@ public class Jude extends Helper {
 
     static int getIntegerNum() throws IOException {
         int val = 0;
+        boolean neg = false;
         newLine();
+        if (look == '-') {
+            neg = true;
+            getChar();
+        }
         if (!isDigit(look)) {
             expected("Integer");
         }
@@ -721,12 +825,12 @@ public class Jude extends Helper {
             getChar();
         }
         skipWhite();
-        return val;
+        return neg ? -val : val;
     }
 
     static boolean isIntType(Type type) {
         return type == Type.BYTE || type == Type.SHORT || type == Type.INT
-                || type == Type.LONG || type == Type.BOOL || type == Type.CHAR;
+                || type == Type.LONG || type == Type.CHAR;
     }
 
     /**
@@ -952,6 +1056,8 @@ public class Jude extends Helper {
 
     static void program() throws IOException {
 
+        popInitCode();
+
         emitLn("section .text");
         emitLn("global main");
 
@@ -1131,6 +1237,9 @@ public class Jude extends Helper {
 
         methodStack.push(name);
         postMethodStartLabel(name);
+        if ("main".equals(name)) {
+            emitLn("call init");
+        }
         doMethodParams(name);
         match('{');
         int offset = 0;
@@ -1643,11 +1752,25 @@ public class Jude extends Helper {
             if (isDefinedLocalVar(name)) {
                 duplicate(name);
             }
-            offset += offsetPerVar;
-            defineLocalVar(name, type, offset);
+
+            int size = 1;
+            if (look == '[') {
+                // An array to define:
+                match('[');
+                size = Integer.parseInt(getNum());
+                match(']');
+                offset += size * offsetPerVar;
+            } else {
+                offset += offsetPerVar;
+            }
+            defineLocalVar(name, type, offset, size);
 
             if (look == '=') {
                 match('=');
+                // simply prohibit initialization of array:
+                if (size > 1) {
+                    abort("local array initialization is not allowed");
+                }
                 storeVar(type, name, doAssignment(type));
             }
 
@@ -1758,6 +1881,10 @@ public class Jude extends Helper {
         }
 
         switch (look) {
+            case '[':
+                // Start to support array type:
+                defineGlobalArray(name, type);
+                break;
             case ';':
             case '=':
                 if (toType(type) == Type.VOID) {
@@ -1830,8 +1957,44 @@ public class Jude extends Helper {
 
     static void assignment(Type type, String name) throws IOException {
 
+        int offset = 0;
+        String index = null;
+        if (isDefinedArray(name)) {
+            int size = getArraySize(name);
+            match('[');
+            getToken();
+            if (!isNum(token) && (!isIntType(typeOf(token)))) {
+                abort("unexpected value as array element index: " + token);
+            }
+
+            if (isNum(token)) {
+                offset = Integer.parseInt(token);
+                if (offset < 0 || offset > (size / sizeOfType(type))) {
+                    // prompt a compile time error:
+                    abort("array index out of bound! " + token);
+                }
+                index = String.valueOf(offset);
+            } else {
+                emitLn("push rax");
+                if (isDefinedArray(token)) {
+                    loadArray(token);
+                } else {
+                    loadVar(token);
+                }
+                // TODO compare index and array size to optionally generate a runtime exception. Plan is that if out of
+                // bound is detected, print an error and exit the program, so first we need a print function.
+                emitLn("mov rcx, rax");
+                emitLn("pop rax");
+                index = "rcx";
+            }
+            match(']');
+        }
         match('=');
-        storeVar(type, name, doAssignment(type));
+        if (isDefinedArray(name)) {
+            storeArray(type, name, index, doAssignment(type));
+        } else {
+            storeVar(type, name, doAssignment(type));
+        }
         match(';');
     }
 
@@ -1877,6 +2040,35 @@ public class Jude extends Helper {
                 emitLn("mov [rbp-" + getLocalVarOffset(name) + "], " + reg);
             } else if (isParam(name)) {
                 storeIntParam(name);
+            } else {
+                abort("expected legal variable, but found " + name);
+            }
+        }
+    }
+
+    static void storeArray(Type type, String name, String index, Type expType) {
+
+        if (type == Type.FLOAT) {
+            if (expType == Type.FLOAT) {
+                emitLn("fld qword [" + TEMP_FLOAT_VAR_NAME + "]");
+            } else {
+                // An integer-to-float assignment:
+                emitLn("fild qword [rax]");
+            }
+            if (isDefinedGlobalVar(name)) {
+                emitLn("fstp qword [" + name + " + " + index + " * " + sizeOfType(type) + "]");
+            } else if (isDefinedLocalVar(name)) {
+                emitLn("fstp qword [rbp-" + getLocalVarOffset(name) + " + " + index + " * " + sizeOfType(type) + "]");
+            } else {
+                abort("expected legal variable, but found " + name);
+            }
+        } else {
+            // store with the correct register:
+            String reg = regOfType(typeOf(name));
+            if (isDefinedGlobalVar(name)) {
+                emitLn("mov [" + name + " + " + index + " * " + sizeOfType(type) + "], " + reg);
+            } else if (isDefinedLocalVar(name)) {
+                emitLn("mov [rbp-" + getLocalVarOffset(name) + " + " + index + " * " + sizeOfType(type) + "], " + reg);
             } else {
                 abort("expected legal variable, but found " + name);
             }
@@ -1951,7 +2143,54 @@ public class Jude extends Helper {
             abort("expected legal variable, but found " + name);
         }
 
-        // Sign extension, we extend the value to until rax:
+        // Sign extension, we extend the value to rax:
+        if ("al".equals(reg)) {
+            emitLn("cbw");
+            emitLn("cwde");
+            emitLn("cdqe");
+        } else if ("ax".equals(reg)) {
+            emitLn("cwde");
+            emitLn("cdqe");
+        } else if ("eax".equals(reg)) {
+            emitLn("cdqe");
+        }
+        return typeOf(name);
+    }
+
+    static Type loadArray(String name) throws IOException {
+        match('[');
+        String index = getToken();
+        if (!isNum(index)) {
+            emitLn("push rax");
+            if (isDefinedArray(index)) {
+                loadArray(index);
+            } else {
+                loadVar(index);
+            }
+            emitLn("mov rcx, rax");
+            emitLn("pop rax");
+            index = "rcx";
+        }
+        match(']');
+        if (typeOf(name) == Type.FLOAT) {
+            return loadFloatArray(name, index);
+        }
+        emitLn("mov rax, 0"); // Clear all bits of rax
+
+        String reg = regOfType(typeOf(name));
+
+        if (isDefinedGlobalVar(name)) {
+
+            emitLn("mov " + reg + ", " + name + " + " + index + " * " + sizeOfType(typeOf(name)));
+        } else if (isDefinedLocalVar(name)) {
+            emitLn("mov " + reg + ", [rbp-" + getLocalVarOffset(name) + " + " + index + " * " + sizeOfType(typeOf(name)) + "]");
+        } else if (isParam(name)) {
+            emitLn("mov " + reg + ", [rbp+" + getParamOffset(name) + " + " + index + " * " + sizeOfType(typeOf(name)) + "]");
+        } else {
+            abort("expected legal variable, but found " + name);
+        }
+
+        // Sign extension, we extend the value to rax:
         if ("al".equals(reg)) {
             emitLn("cbw");
             emitLn("cwde");
@@ -1983,6 +2222,24 @@ public class Jude extends Helper {
         return Type.FLOAT;
     }
 
+    static Type loadFloatArray(String name, String index) {
+
+        if (isDefinedGlobalVar(name)) {
+
+            emitLn("fld qword [" + name + " + " + index + " * " + sizeOfType(typeOf(name)) + "]");
+            emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+        } else if (isDefinedLocalVar(name)) {
+            emitLn("fld qword [rbp-" + getLocalVarOffset(name) + " + " + index + " * " + sizeOfType(typeOf(name)) + "]");
+            emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+        } else if (isParam(name)) {
+            emitLn("fld qword [rbp+" + getParamOffset(name) + " + " + index + " * " + sizeOfType(typeOf(name)) + "]");
+            emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
+        } else {
+            abort("expected legal variable, but found " + name);
+        }
+        return Type.FLOAT;
+    }
+
     static Type factor() throws IOException {
 
         newLine();
@@ -2005,6 +2262,10 @@ public class Jude extends Helper {
                 String methodName = token;
                 callMethod(token);
                 return methods.get(methodName).returnType;
+            }
+            // load array element:
+            if (isDefinedArray(token)) {
+                return loadArray(token);
             }
             return loadVar(token);
         } else if (isNum(String.valueOf(look))) {
