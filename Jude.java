@@ -31,16 +31,12 @@ import java.util.Map;
  * <p>
  * It will be improved step by step and currently does not support the following
  * features:
- * <p>
- * 1. pointer type <br>
- * 2. array type <br>
- * 3. reference type <br>
- * 4. user defined type including List, Map, Structure, Class etc.<br>
- * 5. a statement starts with "(".<br>
- * 6. enum type.<br>
- * 7. overload of procedure.<br>
- * 8. floating type.<br>
- * 9. string type.
+ * <li> pointer type <br>
+ * <li> reference type <br>
+ * <li> user defined type including Enum, Structure, Class etc.<br>
+ * <li> a statement starts with "(".<br>
+ * <li> overload of procedure.<br>
+ * <li> string type.</li>
  * <p>
  * About the types:
  * <p>
@@ -125,7 +121,8 @@ import java.util.Map;
  * </pre>
  * <p>
  * <h2>Change log</h2>
- * 2015-08-08   Start to support array type.
+ * 2015-08-08   Start to support array type.<br>
+ * 2015-08-16   Start to test the assembly code.<br>
  *
  * @author zpf.073@gmail.com
  */
@@ -163,13 +160,13 @@ public class Jude extends Helper {
 
     static int currentOffset = 0;
 
-    static enum Type {
-        VOID, BOOL, CHAR, BYTE, SHORT, INT, FLOAT, LONG, NON_FLOAT, IF, ELSE, ELIF, WHILE, FOR, IN, AS, CASE, CLASS,
+    enum Type {
+        VOID, BOOL, CHAR, BYTE, SHORT, INT, FLOAT, LONG, IF, ELSE, ELIF, WHILE, FOR, IN, AS, CASE, CLASS,
 
-        NONE, END, VAR, PROC, RETURN, ARRAY_BOOL, ARRAY_BYTE, ARRAY_CHAR, ARRAY_SHORT, ARRAY_INT, ARRAY_LONG
+        NONE, END, VAR, PROC, RETURN
     }
 
-    static enum Op {
+    enum Op {
         EQUAL, NEQUAL, GREATER, GREATERE, SMALLER, SMALLERE, AND, OR, XOR, NOT
     }
 
@@ -191,6 +188,16 @@ public class Jude extends Helper {
         String name;
         Type type;
         int length;
+
+        @Override
+        public String toString() {
+            final StringBuilder sb = new StringBuilder("VarInfo{");
+            sb.append("name='").append(name).append('\'');
+            sb.append(", type=").append(type);
+            sb.append(", length=").append(length);
+            sb.append('}');
+            return sb.toString();
+        }
     }
 
     static byte isLastVarArray = -1;
@@ -218,6 +225,9 @@ public class Jude extends Helper {
 
     public static final String CLASS = "class";
 
+    // Some system procedures:
+    public static final String PRINT = "print";
+
     public static final String EQUAL = "==";
     public static final String NEQUAL = "!=";
     public static final String GREATER = ">";
@@ -230,6 +240,9 @@ public class Jude extends Helper {
     public static final String XOR = "^";
     public static final String NOT = "!";
 
+    static {
+        methods.put(PRINT, null);
+    }
 
     private static Map<String, Type> keywords;
 
@@ -285,10 +298,13 @@ public class Jude extends Helper {
 
     static final long MAX_STACK_SIZE = 12800;
     static final String TEMP_FLOAT_VAR_NAME = "__1__";
+    static final String NEW_LINE_CONST_STR = "__2__";
+    static final String OUTPUT_BUFFER_ADDR = "__output_buffer__";
 
     static Stack<String> methodStack = new Stack<String>();
 
     static int labelIndex = 0;
+    static int constStrIndex = 0;
     static int preIfCount = 0;
     static String endIfLabel = null;
 
@@ -343,6 +359,11 @@ public class Jude extends Helper {
         return "label" + labelIndex;
     }
 
+    static String newConstStr() {
+        constStrIndex++;
+        return "__constStr" + constStrIndex;
+    }
+
     static void postLabel(String l) {
         if (shouldPush()) {
             pushCodeLine(l + ":");
@@ -353,17 +374,17 @@ public class Jude extends Helper {
 
     static void postMethodStartLabel(String name) {
         if (shouldPush()) {
-            pushCodeLine(name + ":");
+            pushCodeLine("_" + name + ":");
         } else {
-            writeLine(name + ":");
+            writeLine("_" + name + ":");
         }
     }
 
     static void postMethodEndLabel(String name) {
         if (shouldPush()) {
-            pushCodeLine("end_" + name + ":");
+            pushCodeLine("_end_" + name + ":");
         } else {
-            writeLine("end_" + name + ":");
+            writeLine("_end_" + name + ":");
         }
     }
 
@@ -469,7 +490,7 @@ public class Jude extends Helper {
             default:
                 abort("unexpected type: " + info.type);
         }
-        // New line if not permitted here:
+        // New line is not permitted here:
         if (look == '=') {
             match('=');
             match('{');
@@ -497,8 +518,8 @@ public class Jude extends Helper {
         match(';');
     }
 
-    static String getGlobalVarType(String name) {
-        return globalVariables.get(name).type.name();
+    static Type getGlobalVarType(String name) {
+        return globalVariables.get(name).type;
     }
 
     static Type getLocalVarType(String name) {
@@ -507,7 +528,7 @@ public class Jude extends Helper {
 
     static Type typeOf(String name) {
         if (isDefinedGlobalVar(name)) {
-            return types.get(getGlobalVarType(name));
+            return getGlobalVarType(name);
         }
         if (isDefinedLocalVar(name)) {
             return getLocalVarType(name);
@@ -532,25 +553,6 @@ public class Jude extends Helper {
             case LONG:
             case FLOAT:
                 return "rax";
-            default:
-                abort("unknown type:" + type);
-        }
-        return null;
-    }
-
-    static String toAsmType(Type type) {
-        switch (type) {
-            case BOOL:
-            case BYTE:
-            case CHAR:
-                return "byte";
-            case SHORT:
-                return "word";
-            case INT:
-                return "dword";
-            case LONG:
-            case FLOAT:
-                return "qword";
             default:
                 abort("unknown type:" + type);
         }
@@ -587,10 +589,6 @@ public class Jude extends Helper {
 
     static void expected(String s) {
         abort(s + " Expected");
-    }
-
-    static void undefined(String name) {
-        abort("Undefined Identifier " + name);
     }
 
     static void duplicate(String name) {
@@ -687,33 +685,17 @@ public class Jude extends Helper {
         return methods.containsKey(str);
     }
 
-    static boolean isChar(String str) {
-        return str.length() == 1;
-    }
-
     static boolean isAddOp(char c) {
-        if (c == '+' || c == '-') {
-            return true;
-        }
-        return false;
+        return c == '+' || c == '-';
+
     }
 
     static boolean isMulOp(char c) {
-        if (c == '*' || c == '/') {
-            return true;
-        }
-        return false;
+        return c == '*' || c == '/';
     }
 
     static boolean isWhite(char c) {
-        if (c == BLANK || c == TAB) {
-            return true;
-        }
-        return false;
-    }
-
-    static boolean isEndOfLine(char c) {
-        return c == CR || c == LF;
+        return c == BLANK || c == TAB;
     }
 
     static void skipWhite() throws IOException {
@@ -724,10 +706,7 @@ public class Jude extends Helper {
 
     static boolean isAlpha(char c) {
         char upC = Character.toUpperCase(c);
-        if (upC <= 'Z' && upC >= 'A') {
-            return true;
-        }
-        return false;
+        return upC <= 'Z' && upC >= 'A';
     }
 
     static boolean isDigit(char c) {
@@ -845,7 +824,7 @@ public class Jude extends Helper {
      * @return
      * @throws IOException
      */
-    static Object getFloatNum() throws IOException {
+    static Number getFloatNum() throws IOException {
 
         String val = "";
         int pointCount = 0;
@@ -896,14 +875,6 @@ public class Jude extends Helper {
         token = str;
         return str;
 
-    }
-
-    static String getConst(Type type) throws IOException {
-        token = getToken();
-        if (!isConst(type, token)) {
-            abort("not a valid const: " + token + " of type: " + type);
-        }
-        return token;
     }
 
     static boolean isConst(Type type, String value) {
@@ -1056,10 +1027,11 @@ public class Jude extends Helper {
 
     static void program() throws IOException {
 
-        popInitCode();
-
+        emitLn("default rel");
         emitLn("section .text");
-        emitLn("global main");
+        emitLn("global _main");
+
+        popInitCode();
 
         // Predefine some procedures and constants:
         defineHandleOverFlow();
@@ -1201,15 +1173,6 @@ public class Jude extends Helper {
         return true;
     }
 
-    static boolean isCmpValid(Type type, Type expType) {
-
-        if (type == Type.BOOL || expType == Type.BOOL) {
-            return false;
-        }
-
-        return true;
-    }
-
     static void doMethod() throws IOException {
 
         String type = token;
@@ -1238,7 +1201,7 @@ public class Jude extends Helper {
         methodStack.push(name);
         postMethodStartLabel(name);
         if ("main".equals(name)) {
-            emitLn("call init");
+            emitLn("call _init");
         }
         doMethodParams(name);
         match('{');
@@ -1314,7 +1277,7 @@ public class Jude extends Helper {
 
     static void doElif() throws IOException {
         if (preIfCount == 0) {
-            abort("require a 'if' before 'elif'");
+            abort("require an 'if' before 'elif'");
         }
         preIfCount = 0;
         // store the end label:
@@ -1506,10 +1469,131 @@ public class Jude extends Helper {
     }
 
     static void callMethod(String name) throws IOException {
+
+        if (PRINT.equals(name)) {
+            callPrint();
+            return;
+        }
         int n = paramList(name);
         call(name);
 
         //cleanStack(n);
+    }
+
+    /**
+     * Print something to terminal:
+     * sample code:
+     * <pre>
+     *     int a= 9, b = 10;
+     *     float c = 9.5;
+     *     print(a + ", " + b + ", " + c);
+     *     println("Hello World!");
+     * </pre>
+     * Basic idea is to identify every parameter connected by '+' and use system calls to print the parameter solely
+     * according to its type.<br>
+     * For instance in the preceding example,
+     * <pre>
+     *     print(a + ", " + b + ", " + c);
+     * </pre>
+     * would be decomposed into:
+     * <pre>
+     *     print(a);
+     *     print(", ");
+     *     print(b);
+     *     print(", ");
+     *     print(c);
+     * </pre>
+     *
+     * @throws IOException
+     */
+    static void callPrint() throws IOException {
+        match('(');
+        while (true) {
+            if (look == '\"') {
+                // we meet a const string:
+                printString();
+            } else if (isDigit(look)) {
+                // we meet a const number:
+                doPrintString(String.valueOf(getNum()));
+            } else {
+                // it's a variable:
+                doPrintVar(getName());
+            }
+            if (look == '+') {
+                match('+');
+                continue;
+            } else if (look == ')') {
+                match(')');
+                break;
+            } else {
+                abort("unexpected char:" + look);
+            }
+        }
+    }
+
+    static void printString() throws IOException {
+        getChar();
+        String str = "";
+        while (look != '\"') {
+            // TODO not support a string containing \"
+            if (look == LF || look == CR) {
+                abort("not permitted char:" + (int)look);
+            }
+            str += look;
+            getChar();
+        }
+        match('\"');
+        doPrintString(str);
+    }
+
+
+    static void doPrintString(String s) {
+        String name = newConstStr();
+        storeCode(name + ":" + TAB + "db " + "\"" + s + "\"");
+        storeCode(".len: equ $ - " + name);
+
+        emitLn("mov rax, 0x2000004");
+        emitLn("mov rdi, 1");
+        emitLn("mov rsi, " + name);
+        emitLn("mov rdx, " + name + ".len");
+        emitLn("syscall");
+    }
+
+    static void doPrintln(String s) {
+        doPrintString(s);
+        printNewLine();
+    }
+
+    static void printNewLine() {
+        emitLn("mov rax, 0x2000004");
+        emitLn("mov rdi, 1");
+        emitLn("mov rsi, " + NEW_LINE_CONST_STR);
+        emitLn("mov rdx, 1");
+        emitLn("syscall");
+    }
+
+    static void doPrintVar(String name) {
+        loadVar(name);
+        if (typeOf(name) == Type.FLOAT) {
+            doPrintFloatVar();
+        } else {
+            doPrintIntVar();
+        }
+    }
+
+    static void doPrintIntVar() {
+        emitLn("mov [" + OUTPUT_BUFFER_ADDR + "], rax");
+        emitLn("mov rax, 0x2000004");
+        emitLn("mov rdi, 1");
+        emitLn("mov rsi, " + OUTPUT_BUFFER_ADDR);
+        emitLn("mov rdx, 8");
+        emitLn("syscall");
+    }
+
+    // TODO It's a little more complicated in printing float variable iva syscall.
+    // So we skip it as for now.
+    static void doPrintFloatVar() {
+
     }
 
     static void doReturn() throws IOException {
@@ -1804,8 +1888,7 @@ public class Jude extends Helper {
     }
 
     static void methodEpilog() {
-        emitLn("mov rsp, rbp");
-        emitLn("pop rbp");
+        emitLn("leave");
         emitLn("ret");
     }
 
@@ -1962,31 +2045,13 @@ public class Jude extends Helper {
         if (isDefinedArray(name)) {
             int size = getArraySize(name);
             match('[');
-            getToken();
-            if (!isNum(token) && (!isIntType(typeOf(token)))) {
-                abort("unexpected value as array element index: " + token);
-            }
-
-            if (isNum(token)) {
-                offset = Integer.parseInt(token);
-                if (offset < 0 || offset > (size / sizeOfType(type))) {
-                    // prompt a compile time error:
-                    abort("array index out of bound! " + token);
-                }
-                index = String.valueOf(offset);
-            } else {
-                emitLn("push rax");
-                if (isDefinedArray(token)) {
-                    loadArray(token);
-                } else {
-                    loadVar(token);
-                }
-                // TODO compare index and array size to optionally generate a runtime exception. Plan is that if out of
-                // bound is detected, print an error and exit the program, so first we need a print function.
-                emitLn("mov rcx, rax");
-                emitLn("pop rax");
-                index = "rcx";
-            }
+            emitLn("push rax");
+            expression();
+            // TODO compare index and array size to optionally generate a runtime exception. Plan is that if out of
+            // bound is detected, print an error and exit the program, so first we need a print function.
+            emitLn("mov rcx, rax");
+            emitLn("pop rax");
+            index = "rcx";
             match(']');
         }
         match('=');
@@ -2158,19 +2223,14 @@ public class Jude extends Helper {
     }
 
     static Type loadArray(String name) throws IOException {
+
+        String index = null;
         match('[');
-        String index = getToken();
-        if (!isNum(index)) {
-            emitLn("push rax");
-            if (isDefinedArray(index)) {
-                loadArray(index);
-            } else {
-                loadVar(index);
-            }
-            emitLn("mov rcx, rax");
-            emitLn("pop rax");
-            index = "rcx";
-        }
+        emitLn("push rax");
+        expression();
+        emitLn("mov rcx, rax");
+        emitLn("pop rax");
+        index = "rcx";
         match(']');
         if (typeOf(name) == Type.FLOAT) {
             return loadFloatArray(name, index);
@@ -2252,7 +2312,7 @@ public class Jude extends Helper {
             getName();
             // Don't forget bool value is also a non-number string. Usually a
             // bool assignment is invalid in an expression, but we will just
-            // leave the judgment to subsequent program.
+            // leave the decision to subsequent program.
             if (isBool(token)) {
                 return loadBool(token);
             }
@@ -2660,17 +2720,7 @@ public class Jude extends Helper {
     }
 
     static void boolFactor() throws IOException {
-
-        /*getToken();
-        if (isBool(token)) {
-            if (getBoolean()) {
-                emitLn("mov rax, 0");
-            } else {
-                emitLn("mov rax, 1");
-            }
-        } else {*/
         relation();
-        // }
     }
 
     static boolean getBoolean() throws IOException {
@@ -2788,7 +2838,7 @@ public class Jude extends Helper {
 
 
     static void defineHandleOverFlow() {
-        postLabel("handle_overflow");
+        postLabel("_handle_overflow");
         // Simply exit the program:
         exit(1);
     }
@@ -2801,9 +2851,15 @@ public class Jude extends Helper {
 
     public static void main(String[] args) throws IOException {
 
+        emitLn("section .bss");
+        emitLn(OUTPUT_BUFFER_ADDR + " resb 8"); // reserve 8 byte for print function
+        storeCode("__something:    db \"useless string\"");
+        storeCode(NEW_LINE_CONST_STR + ":" + TAB + "db `\\n`");
+        storeCode(".len equ $ - " + NEW_LINE_CONST_STR);
         init();
         topDecls();
         program();
+        fetchCode();
     }
 
 }
