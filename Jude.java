@@ -128,11 +128,7 @@ import java.util.Map;
  */
 public class Jude extends Helper {
 
-    static final char TAB = '\t';
-    static final char CR = '\r';
-    static final char LF = '\n';
-    static final char BLANK = ' ';
-    static final char POINT = '.';
+
 
     static char look;
 
@@ -227,6 +223,7 @@ public class Jude extends Helper {
 
     // Some system procedures:
     public static final String PRINT = "print";
+    public static final String PRINTLN = "println";
 
     public static final String EQUAL = "==";
     public static final String NEQUAL = "!=";
@@ -242,6 +239,7 @@ public class Jude extends Helper {
 
     static {
         methods.put(PRINT, null);
+        methods.put(PRINTLN, null);
     }
 
     private static Map<String, Type> keywords;
@@ -297,9 +295,6 @@ public class Jude extends Helper {
     }
 
     static final long MAX_STACK_SIZE = 12800;
-    static final String TEMP_FLOAT_VAR_NAME = "__1__";
-    static final String NEW_LINE_CONST_STR = "__2__";
-    static final String OUTPUT_BUFFER_ADDR = "__output_buffer__";
 
     static Stack<String> methodStack = new Stack<String>();
 
@@ -449,7 +444,7 @@ public class Jude extends Helper {
         info.type = toType(type);
         info.length = sizeOfType(info.type);
         if (isLastVarArray == 1 || isLastVarArray == -1) {
-            emitLn("section .data");
+            storeCode("section .data");
             isLastVarArray = 0;
         }
         globalVariables.put(name, info);
@@ -1129,10 +1124,10 @@ public class Jude extends Helper {
         }
 
         if (varValue != null) {
-            emitLn(name + ":" + TAB + getStoreType(findKeyword(type)) + TAB
+            storeCode(name + ":" + TAB + getStoreType(findKeyword(type)) + TAB
                     + varValue);
         } else {
-            emitLn(name + ":" + TAB + getStoreType(findKeyword(type)) + TAB
+            storeCode(name + ":" + TAB + getStoreType(findKeyword(type)) + TAB
                     + defaultValue(findKeyword(type)));
         }
         match(';');
@@ -1474,6 +1469,12 @@ public class Jude extends Helper {
             callPrint();
             return;
         }
+
+        if (PRINTLN.equals(name)) {
+            callPrintln();
+            return;
+        }
+
         int n = paramList(name);
         call(name);
 
@@ -1531,6 +1532,11 @@ public class Jude extends Helper {
         }
     }
 
+    static void callPrintln() throws IOException {
+        callPrint();
+        printNewLine();
+    }
+
     static void printString() throws IOException {
         getChar();
         String str = "";
@@ -1582,12 +1588,11 @@ public class Jude extends Helper {
     }
 
     static void doPrintIntVar() {
-        emitLn("mov [" + OUTPUT_BUFFER_ADDR + "], rax");
-        emitLn("mov rax, 0x2000004");
-        emitLn("mov rdi, 1");
-        emitLn("mov rsi, " + OUTPUT_BUFFER_ADDR);
-        emitLn("mov rdx, 8");
-        emitLn("syscall");
+        emitLn("mov [__tmp_buf], rax");
+        emitLn("mov rbx, 0");
+        emitLn("cmp qword [__tmp_buf], 0");
+        emitLn("jl __set_neg_flag");
+        emitLn("call _push_digit");
     }
 
     // TODO It's a little more complicated in printing float variable iva syscall.
@@ -2199,7 +2204,7 @@ public class Jude extends Helper {
 
         if (isDefinedGlobalVar(name)) {
 
-            emitLn("mov " + reg + ", " + name);
+            emitLn("mov " + reg + ", [" + name + "]");
         } else if (isDefinedLocalVar(name)) {
             emitLn("mov " + reg + ", [rbp-" + getLocalVarOffset(name) + "]");
         } else if (isParam(name)) {
@@ -2388,7 +2393,7 @@ public class Jude extends Helper {
 
         // Consider the possibility of overflowing:
         if (firstType == Type.LONG || secondType == Type.LONG) {
-            emitLn("jo handle_overflow");
+            emitLn("jo _handle_overflow");
         }
 
         // Which type should be returned:
@@ -2418,7 +2423,7 @@ public class Jude extends Helper {
             emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
         }
 
-        emitLn("jo handle_overflow");
+        emitLn("jo _handle_overflow");
         return Type.FLOAT;
     }
 
@@ -2434,11 +2439,14 @@ public class Jude extends Helper {
         }
 
         emitLn("pop rbx");
+        emitLn("push rax");
+        emitLn("mov rax, rbx");
+        emitLn("pop rbx");
         emitLn("sub rax, rbx");
 
         // Consider the possibility of overflowing:
         if (firstType == Type.LONG || secondType == Type.LONG) {
-            emitLn("jo handle_overflow");
+            emitLn("jo _handle_overflow");
         }
 
         // Which type should be returned:
@@ -2468,7 +2476,7 @@ public class Jude extends Helper {
             emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
         }
 
-        emitLn("jo handle_overflow");
+        emitLn("jo _handle_overflow");
         return Type.FLOAT;
     }
 
@@ -2486,7 +2494,7 @@ public class Jude extends Helper {
 
         emitLn("pop rbx");
         emitLn("imul rbx");
-        emitLn("jo handle_overflow");
+        emitLn("jo _handle_overflow");
 
         // Which type should be returned:
         if (firstType.ordinal() < secondType.ordinal()) {
@@ -2515,7 +2523,7 @@ public class Jude extends Helper {
             emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
         }
 
-        emitLn("jo handle_overflow");
+        emitLn("jo _handle_overflow");
         return Type.FLOAT;
     }
 
@@ -2535,8 +2543,11 @@ public class Jude extends Helper {
         // result is zero:
         emitLn("xor rdx, rdx");
         emitLn("pop rbx");
+        emitLn("push rax");
+        emitLn("mov rax, rbx");
+        emitLn("pop rbx");
         emitLn("idiv rbx");
-        emitLn("jo handle_overflow");
+        emitLn("jo _handle_overflow");
         return firstType;
     }
 
@@ -2558,7 +2569,7 @@ public class Jude extends Helper {
             emitLn("fstp qword [" + TEMP_FLOAT_VAR_NAME + "]");
         }
 
-        emitLn("jo handle_overflow");
+        emitLn("jo _handle_overflow");
         return Type.FLOAT;
     }
 
@@ -2851,11 +2862,9 @@ public class Jude extends Helper {
 
     public static void main(String[] args) throws IOException {
 
-        emitLn("section .bss");
-        emitLn(OUTPUT_BUFFER_ADDR + " resb 8"); // reserve 8 byte for print function
-        storeCode("__something:    db \"useless string\"");
-        storeCode(NEW_LINE_CONST_STR + ":" + TAB + "db `\\n`");
-        storeCode(".len equ $ - " + NEW_LINE_CONST_STR);
+        //emitLn("section .bss");
+        //emitLn(OUTPUT_BUFFER_ADDR + " resb 8"); // reserve 8 byte for print function
+
         init();
         topDecls();
         program();
