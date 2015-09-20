@@ -12,6 +12,16 @@ import java.util.List;
  */
 public class Helper {
 
+    static final char TAB = '\t';
+    static final char CR = '\r';
+    static final char LF = '\n';
+    static final char BLANK = ' ';
+    static final char POINT = '.';
+
+    static final String TEMP_FLOAT_VAR_NAME = "__1__";
+    static final String NEW_LINE_CONST_STR = "__2__";
+    static final String OUTPUT_BUFFER_ADDR = "__output_buffer__";
+
     public static BufferedWriter writer;
     public static BufferedReader reader;
 
@@ -84,7 +94,17 @@ public class Helper {
 
     public static void pushInitCodeLine(String code) {
         try {
-            initCodePusher.write(code);
+            initCodePusher.write("\t" + code);
+            initCodePusher.newLine();
+            initCodePusher.flush();
+        } catch (Exception e) {
+            System.out.println("" + e);
+        }
+    }
+
+    public static void pushInitLabelLine(String label) {
+        try {
+            initCodePusher.write(label + ":");
             initCodePusher.newLine();
             initCodePusher.flush();
         } catch (Exception e) {
@@ -142,16 +162,68 @@ public class Helper {
             poper = new BufferedReader(new FileReader("tmp.asm"));
             initCodePusher = new BufferedWriter(new FileWriter("init.asm"));
             initCodePoper = new BufferedReader(new FileReader("init.asm"));
-            initCodePusher.write("_init:");
-            initCodePusher.newLine();
-            initCodePusher.flush();
-            initCodePusher.write("\tpush rbp");
-            initCodePusher.newLine();
-            initCodePusher.flush();
-            initCodePusher.write("\tmov rbp, rsp");
-            initCodePusher.newLine();
-            initCodePusher.flush();
+
+            pushInitLabelLine("_push_digit");
+            pushInitCodeLine("mov qword rax, [__tmp_buf]");
+            pushInitCodeLine("call __divide_by_ten");
+            pushInitCodeLine("push rax");
+            pushInitCodeLine("inc rbx");
+            pushInitCodeLine("cmp qword [__tmp_buf], 0");
+            pushInitCodeLine("jg _push_digit");
+            pushInitCodeLine("mov rax, [__neg_flag]");
+            pushInitCodeLine("mov [__out_buf], rax");
+            pushInitCodeLine("cmp qword [__neg_flag], 0");
+            pushInitCodeLine("jle __pop_digit");
+            pushInitCodeLine("call __print_digit");
+
+            pushInitLabelLine("__pop_digit");
+            pushInitCodeLine("pop rax");
+            pushInitCodeLine("mov [__out_buf], rax");
+            pushInitCodeLine("call __print_digit");
+            pushInitCodeLine("dec rbx");
+            pushInitCodeLine("cmp rbx, 0");
+            pushInitCodeLine("jg __pop_digit");
+            pushInitCodeLine("ret");
+
+            pushInitLabelLine("__set_neg_flag");
+            pushInitCodeLine("mov qword [__neg_flag], 45");
+            pushInitCodeLine("mov rax, [__tmp_buf]");
+            pushInitCodeLine("neg rax");
+            pushInitCodeLine("mov [__tmp_buf], rax");
+            pushInitCodeLine("jmp _push_digit");
+
+            pushInitLabelLine("__print_digit");
+            pushInitCodeLine("mov rax, 0x2000004");
+            pushInitCodeLine("mov rdi, 1");
+            pushInitCodeLine("mov rsi, __out_buf");
+            pushInitCodeLine("mov rdx, 1");
+            pushInitCodeLine("syscall");
+            pushInitCodeLine("ret");
+
+            pushInitLabelLine("__divide_by_ten");
+            pushInitCodeLine("mov rdx, 0");
+            pushInitCodeLine("mov rcx, 10");
+            pushInitCodeLine("idiv qword rcx");
+            pushInitCodeLine("mov [__tmp_buf], rax");
+            pushInitCodeLine("mov rax, rdx");
+            pushInitCodeLine("add rax, 0x30");
+            pushInitCodeLine("ret");
+
+            pushInitLabelLine("_init");
+            pushInitCodeLine("push rbp");
+            pushInitCodeLine("mov rbp, rsp");
             codes.add("section .data");
+            storeCode("__something:    db \"useless string\"");
+            storeCode(NEW_LINE_CONST_STR + ":\t" + "db `\\n`");
+            storeCode(".len equ $ - " + NEW_LINE_CONST_STR);
+            codes.add("__y: db  \"yyy\"");
+            codes.add(".len equ $ - __y");
+            codes.add("__ten: dq  10");
+            codes.add("__tmp_buf: dq 0");
+            codes.add("__neg_flag: dq 0");
+            codes.add("section .bss");
+            codes.add("__x  resb 8");
+            codes.add("__out_buf    resb 1");
         } catch (Exception e) {
             System.out.println("" + e);
         }
