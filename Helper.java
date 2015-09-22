@@ -164,6 +164,9 @@ public class Helper {
             initCodePoper = new BufferedReader(new FileReader("init.asm"));
 
             pushInitLabelLine("_push_digit");
+            pushInitCodeLine("cmp qword [__tmp_buf], 0");
+            pushInitCodeLine("jl __set_neg_flag");
+            pushInitLabelLine("__push_digit");
             pushInitCodeLine("mov qword rax, [__tmp_buf]");
             pushInitCodeLine("call __divide_by_ten");
             pushInitCodeLine("push rax");
@@ -172,8 +175,12 @@ public class Helper {
             pushInitCodeLine("jg _push_digit");
             pushInitCodeLine("mov rax, [__neg_flag]");
             pushInitCodeLine("mov [__out_buf], rax");
-            pushInitCodeLine("cmp qword [__neg_flag], 0");
-            pushInitCodeLine("jle __pop_digit");
+            pushInitCodeLine("push rax");
+            pushInitCodeLine("mov rax, 0");
+            pushInitCodeLine("mov [__neg_flag], rax");
+            pushInitCodeLine("pop rax");
+            pushInitCodeLine("cmp rax, 0");
+            pushInitCodeLine("je __pop_digit");
             pushInitCodeLine("call __print_digit");
 
             pushInitLabelLine("__pop_digit");
@@ -186,11 +193,12 @@ public class Helper {
             pushInitCodeLine("ret");
 
             pushInitLabelLine("__set_neg_flag");
-            pushInitCodeLine("mov qword [__neg_flag], 45");
+            pushInitCodeLine("mov rax, 45");
+            pushInitCodeLine("mov [__neg_flag], rax");
             pushInitCodeLine("mov rax, [__tmp_buf]");
             pushInitCodeLine("neg rax");
             pushInitCodeLine("mov [__tmp_buf], rax");
-            pushInitCodeLine("jmp _push_digit");
+            pushInitCodeLine("jmp __push_digit");
 
             pushInitLabelLine("__print_digit");
             pushInitCodeLine("mov rax, 0x2000004");
@@ -212,18 +220,20 @@ public class Helper {
             pushInitLabelLine("_init");
             pushInitCodeLine("push rbp");
             pushInitCodeLine("mov rbp, rsp");
-            codes.add("section .data");
+
+            storeCode("section .bss");
+            storeCode("__x  resb 8");
+            storeCode("__out_buf    resb 1");
+            storeCode("section .data");
             storeCode("__something:    db \"useless string\"");
             storeCode(NEW_LINE_CONST_STR + ":\t" + "db `\\n`");
             storeCode(".len equ $ - " + NEW_LINE_CONST_STR);
-            codes.add("__y: db  \"yyy\"");
-            codes.add(".len equ $ - __y");
-            codes.add("__ten: dq  10");
-            codes.add("__tmp_buf: dq 0");
-            codes.add("__neg_flag: dq 0");
-            codes.add("section .bss");
-            codes.add("__x  resb 8");
-            codes.add("__out_buf    resb 1");
+            storeCode("__y: db  \"yyy\"");
+            storeCode(".len equ $ - __y");
+            storeCode("__ten: dq  10");
+            storeCode("__tmp_buf: dq 0");
+            storeCode("__neg_flag: dq 0");
+
         } catch (Exception e) {
             System.out.println("" + e);
         }
