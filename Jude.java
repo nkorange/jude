@@ -623,6 +623,26 @@ public class Jude extends Helper {
         return null;
     }
 
+    static String getAssignType(Type varType) {
+        switch (varType) {
+            case BOOL:
+            case CHAR:
+            case BYTE:
+                return "byte";
+            case SHORT:
+                return "word";
+            case INT:
+                return "dword";
+            case LONG:
+            case FLOAT:
+                // TODO what type should float variable use?
+                return "qword";
+            default:
+                abort("illegal type:" + varType);
+        }
+        return null;
+    }
+
     static int getLocalVarOffset(String name) {
         return localVariables.get(name).offset;
     }
@@ -1126,6 +1146,7 @@ public class Jude extends Helper {
         if (varValue != null) {
             storeCode(name + ":" + TAB + getStoreType(findKeyword(type)) + TAB
                     + varValue);
+            pushInitCodeLine("mov " + getAssignType(findKeyword(type)) + " [" + name + "], " + varValue);
         } else {
             storeCode(name + ":" + TAB + getStoreType(findKeyword(type)) + TAB
                     + defaultValue(findKeyword(type)));
@@ -1312,6 +1333,8 @@ public class Jude extends Helper {
         if (!isDefinedVar(var)) {
             abort("not a legal variable:" + var);
         }
+        //loadVar(var);
+        //emitLn("mov rbx, rax");
         match("<-");
         getToken();
         if (isNum(token)) {
@@ -1345,13 +1368,14 @@ public class Jude extends Helper {
         String startFor = newLabel();
         String endFor = newLabel();
         postLabel(startFor);
+        emitLn("push rax");
+        emitLn("mov rax, rbx");
+        storeVar(typeOf(var), var, typeOf(var));
+        emitLn("pop rax");
         emitLn("cmp rbx, rax");
+        emitLn("jg " + endFor);
         emitLn("push rax");
         emitLn("push rbx");
-        emitLn("mov rax, 0");
-        emitLn("setne al");
-        emitLn("cmp al, 0");
-        emitLn("jne " + endFor);
         match(')');
         match('{');
         block();
@@ -1518,7 +1542,7 @@ public class Jude extends Helper {
                 doPrintString(String.valueOf(getNum()));
             } else {
                 // it's a variable:
-                doPrintVar(getName());
+                doPrintVar();
             }
             if (look == '+') {
                 match('+');
@@ -1578,8 +1602,13 @@ public class Jude extends Helper {
         emitLn("syscall");
     }
 
-    static void doPrintVar(String name) {
-        loadVar(name);
+    static void doPrintVar() throws IOException {
+        String name = getName();
+        if (isDefinedArray(name)) {
+            loadArray(name);
+        } else {
+            loadVar(name);
+        }
         if (typeOf(name) == Type.FLOAT) {
             doPrintFloatVar();
         } else {
@@ -1590,8 +1619,6 @@ public class Jude extends Helper {
     static void doPrintIntVar() {
         emitLn("mov [__tmp_buf], rax");
         emitLn("mov rbx, 0");
-        emitLn("cmp qword [__tmp_buf], 0");
-        emitLn("jl __set_neg_flag");
         emitLn("call _push_digit");
     }
 
@@ -2231,6 +2258,7 @@ public class Jude extends Helper {
 
         String index = null;
         match('[');
+        emitLn("push rcx");
         emitLn("push rax");
         expression();
         emitLn("mov rcx, rax");
@@ -2254,6 +2282,8 @@ public class Jude extends Helper {
         } else {
             abort("expected legal variable, but found " + name);
         }
+
+        emitLn("pop rcx");
 
         // Sign extension, we extend the value to rax:
         if ("al".equals(reg)) {
