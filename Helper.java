@@ -201,21 +201,56 @@ public class Helper {
             pushInitCodeLine("jmp __push_digit");
 
             pushInitLabelLine("__print_digit");
+            pushInitCodeLine("push rdi");
+            pushInitCodeLine("push rsi");
             pushInitCodeLine("mov rax, 0x2000004");
             pushInitCodeLine("mov rdi, 1");
             pushInitCodeLine("mov rsi, __out_buf");
             pushInitCodeLine("mov rdx, 1");
             pushInitCodeLine("syscall");
+            pushInitCodeLine("pop rsi");
+            pushInitCodeLine("pop rdi");
             pushInitCodeLine("ret");
 
             pushInitLabelLine("__divide_by_ten");
+            pushInitCodeLine("push rdx");
+            pushInitCodeLine("push rcx");
             pushInitCodeLine("mov rdx, 0");
             pushInitCodeLine("mov rcx, 10");
             pushInitCodeLine("idiv qword rcx");
             pushInitCodeLine("mov [__tmp_buf], rax");
             pushInitCodeLine("mov rax, rdx");
             pushInitCodeLine("add rax, 0x30");
+            pushInitCodeLine("pop rcx");
+            pushInitCodeLine("pop rdx");
             pushInitCodeLine("ret");
+
+            pushInitLabelLine("_print_bool");
+            pushInitCodeLine("cmp rax, 0");
+            pushInitCodeLine("je _print_true");
+            pushInitCodeLine("push rdi");
+            pushInitCodeLine("push rsi");
+            pushInitCodeLine("mov rax, 0x2000004");
+            pushInitCodeLine("mov rdi, 1");
+            pushInitCodeLine("mov rsi, __false");
+            pushInitCodeLine("mov rdx, __false.len");
+            pushInitCodeLine("syscall");
+            pushInitCodeLine("pop rsi");
+            pushInitCodeLine("pop rdi");
+            pushInitLabelLine("__print_bool");
+            pushInitCodeLine("ret");
+
+            pushInitLabelLine("_print_true");
+            pushInitCodeLine("push rdi");
+            pushInitCodeLine("push rsi");
+            pushInitCodeLine("mov rax, 0x2000004");
+            pushInitCodeLine("mov rdi, 1");
+            pushInitCodeLine("mov rsi, __true");
+            pushInitCodeLine("mov rdx, __true.len");
+            pushInitCodeLine("syscall");
+            pushInitCodeLine("pop rsi");
+            pushInitCodeLine("pop rdi");
+            pushInitCodeLine("jmp __print_bool");
 
             pushInitLabelLine("_init");
             pushInitCodeLine("push rbp");
@@ -228,6 +263,10 @@ public class Helper {
             storeCode("__something:    db \"useless string\"");
             storeCode(NEW_LINE_CONST_STR + ":\t" + "db `\\n`");
             storeCode(".len equ $ - " + NEW_LINE_CONST_STR);
+            storeCode("__true:\tdb \"true\"");
+            storeCode(".len equ $ - __true");
+            storeCode("__false:\tdb \"false\"");
+            storeCode(".len equ $ - __false");
             storeCode("__y: db  \"yyy\"");
             storeCode(".len equ $ - __y");
             storeCode("__ten: dq  10");
@@ -263,13 +302,15 @@ public class Helper {
                 writer.flush();
             }
         } catch (Exception e) {
-            System.out.println("" + e);
+            e.printStackTrace();
         }
     }
 
     public static void main(String[] args) throws Exception {
-        writer.write("xxxxxxxx");
-        writer.newLine();
-        writer.close();
+        char[] c = new char[256];
+        for (int i=0; i<256; i++) {
+            c[i] = (char)i;
+            System.out.print(c[i]);
+        }
     }
 }

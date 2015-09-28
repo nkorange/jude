@@ -1,19 +1,15 @@
 /**
- *     Copyright (C) 2015  nkorange<zpf.073@gmail.com>
-
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * 
+ * Copyright (C) 2015  nkorange<zpf.073@gmail.com>
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 import java.io.IOException;
@@ -145,7 +141,6 @@ import java.util.Map;
  * @author zpf.073@gmail.com
  */
 public class Jude extends Helper {
-
 
 
     static char look;
@@ -343,6 +338,10 @@ public class Jude extends Helper {
         return Type.NONE;
     }
 
+    static MethodInfo getMethodInfo(String name) {
+        return methods.get(name);
+    }
+
     static void emit(String s) {
         if (shouldPush()) {
             pushCode(TAB + s);
@@ -386,10 +385,15 @@ public class Jude extends Helper {
     }
 
     static void postMethodStartLabel(String name) {
+
+        if ("main".equals(name)) {
+            name = "_main";
+        }
+
         if (shouldPush()) {
-            pushCodeLine("_" + name + ":");
+            pushCodeLine(name + ":");
         } else {
-            writeLine("_" + name + ":");
+            writeLine(name + ":");
         }
     }
 
@@ -673,6 +677,29 @@ public class Jude extends Helper {
         return params.get(name).index;
     }
 
+    static String getIntParamReg(int index) {
+        switch (index) {
+            case 1:
+                return "rdi";
+            case 2:
+                return "rsi";
+            case 3:
+                return "rdx";
+            case 4:
+                return "rcx";
+            case 5:
+                return "r8";
+            case 6:
+                return "r9";
+            default:
+                return null;
+        }
+    }
+
+    static String getFloatParamReg(int index) {
+        return "mm" + (index - 1);
+    }
+
     static String defaultValue(Type varType) {
         return "0";
     }
@@ -786,7 +813,8 @@ public class Jude extends Helper {
                 }
                 return boolNumeric(tmp);
             case CHAR:
-                return String.valueOf(getAChar());
+                return String.valueOf((int)getAChar());
+            case BYTE:
             case SHORT:
             case INT:
             case LONG:
@@ -843,6 +871,10 @@ public class Jude extends Helper {
     static boolean isIntType(Type type) {
         return type == Type.BYTE || type == Type.SHORT || type == Type.INT
                 || type == Type.LONG || type == Type.CHAR;
+    }
+
+    static boolean isFloatType(Type type) {
+        return type == Type.FLOAT;
     }
 
     /**
@@ -1077,6 +1109,10 @@ public class Jude extends Helper {
             doMethod(lastName, lastType);
             getChar();
             scan();
+        }
+
+        if (".".equals(token)) {
+            end();
         }
 
         while (isKeyword(token)) {
@@ -1517,10 +1553,10 @@ public class Jude extends Helper {
             return;
         }
 
-        int n = paramList(name);
+        pushProcReg(name);
+        paramList(name);
         call(name);
-
-        //cleanStack(n);
+        popProcReg(name);
     }
 
     /**
@@ -1585,7 +1621,7 @@ public class Jude extends Helper {
         while (look != '\"') {
             // TODO not support a string containing \"
             if (look == LF || look == CR) {
-                abort("not permitted char:" + (int)look);
+                abort("not permitted char:" + (int) look);
             }
             str += look;
             getChar();
@@ -1599,12 +1635,18 @@ public class Jude extends Helper {
         String name = newConstStr();
         storeCode(name + ":" + TAB + "db " + "\"" + s + "\"");
         storeCode(".len: equ $ - " + name);
-
+        emitLn("push rdx");
+        emitLn("push rdi");
+        emitLn("push rsi");
         emitLn("mov rax, 0x2000004");
         emitLn("mov rdi, 1");
         emitLn("mov rsi, " + name);
         emitLn("mov rdx, " + name + ".len");
         emitLn("syscall");
+        emitLn("pop rsi");
+        emitLn("pop rdi");
+        emitLn("pop rdx");
+
     }
 
     static void doPrintln(String s) {
@@ -1613,11 +1655,17 @@ public class Jude extends Helper {
     }
 
     static void printNewLine() {
+        emitLn("push rdx");
+        emitLn("push rdi");
+        emitLn("push rsi");
         emitLn("mov rax, 0x2000004");
         emitLn("mov rdi, 1");
         emitLn("mov rsi, " + NEW_LINE_CONST_STR);
         emitLn("mov rdx, 1");
         emitLn("syscall");
+        emitLn("pop rsi");
+        emitLn("pop rdi");
+        emitLn("pop rdx");
     }
 
     static void doPrintVar() throws IOException {
@@ -1629,6 +1677,10 @@ public class Jude extends Helper {
         }
         if (typeOf(name) == Type.FLOAT) {
             doPrintFloatVar();
+        } else if (typeOf(name) == Type.CHAR) {
+            doPrintCharVar();
+        } else if (typeOf(name) == Type.BOOL) {
+            doPrintBoolVar();
         } else {
             doPrintIntVar();
         }
@@ -1640,7 +1692,26 @@ public class Jude extends Helper {
         emitLn("call _push_digit");
     }
 
-    // TODO It's a little more complicated in printing float variable iva syscall.
+    static void doPrintCharVar() {
+        emitLn("mov [__out_buf], rax");
+        emitLn("push rdx");
+        emitLn("push rdi");
+        emitLn("push rsi");
+        emitLn("mov rax, 0x2000004");
+        emitLn("mov rdi, 1");
+        emitLn("mov rsi, __out_buf");
+        emitLn("mov rdx, 1");
+        emitLn("syscall");
+        emitLn("pop rsi");
+        emitLn("pop rdi");
+        emitLn("pop rdx");
+    }
+
+    static void doPrintBoolVar() {
+        emitLn("call _print_bool");
+    }
+
+    // TODO It's a little more complicated in printing float variable via syscall.
     // So we skip it as for now.
     static void doPrintFloatVar() {
 
@@ -1679,7 +1750,7 @@ public class Jude extends Helper {
         match(')');
         // check the count of parameters
         if (n != methods.get(methodName).paramCount) {
-            abort("different arguments number from definition");
+            abort("different argument count from definition");
         }
         return 2 * n;
     }
@@ -1705,6 +1776,7 @@ public class Jude extends Helper {
     static void pushIntParam(Type type, int index) {
 
         if (index > 6) {
+            // FIXME not just push rax
             emitLn("push rax");
         } else {
             switch (index) {
@@ -1947,6 +2019,47 @@ public class Jude extends Helper {
         currentOffset = 8;
     }
 
+    static void pushProcReg(String methodName) {
+        MethodInfo info = getMethodInfo(methodName);
+        int intInd = 0;
+        int floatInd = 0;
+        for (Type type : info.params) {
+            if (isIntType(type)) {
+                intInd++;
+                if (intInd <= 6) {
+                    emitLn("push " + getIntParamReg(intInd));
+                }
+            } else if (isFloatType(type)) {
+                floatInd++;
+                if (floatInd <= 8) {
+                    // TODO push float parameter
+                }
+            }
+
+        }
+    }
+
+    static void popProcReg(String methodName) {
+        MethodInfo info = getMethodInfo(methodName);
+        int intInd = 0;
+        int floatInd = 0;
+        for (Type type : info.params) {
+            if (isIntType(type)) {
+                intInd++;
+                if (intInd <= 6) {
+                    // TODO pop should be in reversed order:
+                    emitLn("pop " + getIntParamReg(intInd));
+                }
+            } else if (isFloatType(type)) {
+                floatInd++;
+                if (floatInd <= 8) {
+                    // TODO pop float parameter
+                }
+            }
+
+        }
+    }
+
     static void block() throws IOException {
         scan();
         firstBlock(token);
@@ -2095,21 +2208,24 @@ public class Jude extends Helper {
         if (isDefinedArray(name)) {
             int size = getArraySize(name);
             match('[');
+            emitLn("push rcx");
             emitLn("push rax");
             expression();
             // TODO compare index and array size to optionally generate a runtime exception. Plan is that if out of
             // bound is detected, print an error and exit the program, so first we need a print function.
             emitLn("mov rcx, rax");
-            emitLn("pop rax");
             index = "rcx";
             match(']');
         }
         match('=');
         if (isDefinedArray(name)) {
             storeArray(type, name, index, doAssignment(type));
+            emitLn("pop rax");
+            emitLn("pop rcx");
         } else {
             storeVar(type, name, doAssignment(type));
         }
+
         match(';');
     }
 
@@ -2181,7 +2297,10 @@ public class Jude extends Helper {
             // store with the correct register:
             String reg = regOfType(typeOf(name));
             if (isDefinedGlobalVar(name)) {
-                emitLn("mov [" + name + " + " + index + " * " + sizeOfType(type) + "], " + reg);
+                emitLn("push rbx");
+                emitLn("lea rbx, [" + name + "]");
+                emitLn("mov [rbx + " + index + " * " + sizeOfType(type) + "], " + reg);
+                emitLn("pop rbx");
             } else if (isDefinedLocalVar(name)) {
                 emitLn("mov [rbp-" + getLocalVarOffset(name) + " + " + index + " * " + sizeOfType(type) + "], " + reg);
             } else {
@@ -2253,7 +2372,11 @@ public class Jude extends Helper {
         } else if (isDefinedLocalVar(name)) {
             emitLn("mov " + reg + ", [rbp-" + getLocalVarOffset(name) + "]");
         } else if (isParam(name)) {
-            emitLn("mov " + reg + ", [rbp+" + getParamOffset(name) + "]");
+            if (getParamIndex(name) <= 6) {
+                emitLn("mov rax, " + getIntParamReg(getParamIndex(name)));
+            } else {
+                emitLn("mov " + reg + ", [rbp+" + getParamOffset(name) + "]");
+            }
         } else {
             abort("expected legal variable, but found " + name);
         }
@@ -2291,8 +2414,10 @@ public class Jude extends Helper {
         String reg = regOfType(typeOf(name));
 
         if (isDefinedGlobalVar(name)) {
-
-            emitLn("mov " + reg + ", " + name + " + " + index + " * " + sizeOfType(typeOf(name)));
+            emitLn("push rbx");
+            emitLn("lea rbx, [" + name + "]");
+            emitLn("mov " + reg + ", [rbx + " + index + " * " + sizeOfType(typeOf(name)) + "]");
+            emitLn("pop rbx");
         } else if (isDefinedLocalVar(name)) {
             emitLn("mov " + reg + ", [rbp-" + getLocalVarOffset(name) + " + " + index + " * " + sizeOfType(typeOf(name)) + "]");
         } else if (isParam(name)) {
@@ -2916,7 +3041,7 @@ public class Jude extends Helper {
         init();
         topDecls();
         program();
-        fetchCode();
+        //fetchCode();
     }
 
 }
