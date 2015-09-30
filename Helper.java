@@ -31,6 +31,8 @@ public class Helper {
     public static BufferedWriter initCodePusher;
     public static BufferedReader initCodePoper;
 
+    public static BufferedReader codeReader = null;
+
     public static boolean pushFlag = false;
 
     public static List<String> codes = new LinkedList<String>();
@@ -227,7 +229,7 @@ public class Helper {
 
             pushInitLabelLine("_print_bool");
             pushInitCodeLine("cmp rax, 0");
-            pushInitCodeLine("je _print_true");
+            pushInitCodeLine("jne _print_true");
             pushInitCodeLine("push rdi");
             pushInitCodeLine("push rsi");
             pushInitCodeLine("mov rax, 0x2000004");
@@ -308,8 +310,8 @@ public class Helper {
 
     public static void main(String[] args) throws Exception {
         char[] c = new char[256];
-        for (int i=0; i<256; i++) {
-            c[i] = (char)i;
+        for (int i = 0; i < 256; i++) {
+            c[i] = (char) i;
             System.out.print(c[i]);
         }
     }

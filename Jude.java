@@ -12,7 +12,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-import java.io.IOException;
+import java.io.*;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -169,10 +169,12 @@ public class Jude extends Helper {
 
     static int currentOffset = 0;
 
+    static boolean endOfFile = false;
+
     enum Type {
         VOID, BOOL, CHAR, BYTE, SHORT, INT, FLOAT, LONG, IF, ELSE, ELIF, WHILE, FOR, IN, AS, CASE, CLASS,
 
-        NONE, END, VAR, PROC, RETURN
+        NONE, END, VAR, PROC, RETURN, COMMENT
     }
 
     enum Op {
@@ -191,6 +193,17 @@ public class Jude extends Helper {
         Type returnType;
         int paramCount;
         List<Type> params;
+
+        @Override
+        public String toString() {
+            final StringBuffer sb = new StringBuffer("MethodInfo{");
+            sb.append("name='").append(name).append('\'');
+            sb.append(", returnType=").append(returnType);
+            sb.append(", paramCount=").append(paramCount);
+            sb.append(", params=").append(params);
+            sb.append('}');
+            return sb.toString();
+        }
     }
 
     static class VarInfo {
@@ -250,6 +263,8 @@ public class Jude extends Helper {
     public static final String XOR = "^";
     public static final String NOT = "!";
 
+    public static final String COMMENT = "//";
+
     static {
         methods.put(PRINT, null);
         methods.put(PRINTLN, null);
@@ -277,6 +292,7 @@ public class Jude extends Helper {
         keywords.put(AS, Type.AS);
         keywords.put(CASE, Type.CASE);
         keywords.put(CLASS, Type.CLASS);
+        keywords.put(COMMENT, Type.COMMENT);
     }
 
     static Map<String, Type> types;
@@ -290,6 +306,7 @@ public class Jude extends Helper {
         types.put(BOOL, Type.BOOL);
         types.put(CHAR, Type.CHAR);
         types.put(FLOAT, Type.FLOAT);
+        types.put(VOID, Type.VOID);
     }
 
     static Map<String, Op> ops = new HashMap<String, Op>();
@@ -333,6 +350,10 @@ public class Jude extends Helper {
 
         if (isDefinedMethod(name)) {
             return Type.PROC;
+        }
+
+        if (name.equals(COMMENT)) {
+            return Type.COMMENT;
         }
 
         return Type.NONE;
@@ -613,7 +634,13 @@ public class Jude extends Helper {
     }
 
     static char getChar() throws IOException {
-        look = (char) System.in.read();
+
+        int res = codeReader.read();
+        if (res == -1) {
+            endOfFile = true;
+        }
+        look = (char)res;
+        //look = (char) System.in.read();
         return look;
     }
 
@@ -706,9 +733,9 @@ public class Jude extends Helper {
 
     static String boolNumeric(String boolValue) {
         if (boolValue.equals("true")) {
-            return "0";
-        } else {
             return "1";
+        } else {
+            return "0";
         }
     }
 
@@ -813,7 +840,7 @@ public class Jude extends Helper {
                 }
                 return boolNumeric(tmp);
             case CHAR:
-                return String.valueOf((int)getAChar());
+                return String.valueOf((int) getAChar());
             case BYTE:
             case SHORT:
             case INT:
@@ -935,6 +962,20 @@ public class Jude extends Helper {
             return String.valueOf((int) getAChar());
         }
 
+        if (isBoolOp(look)) {
+            token = getBoolOp(look);
+            return token;
+        }
+
+        if (look == '/') {
+            getChar();
+            if (look != '/') {
+                abort("// needed");
+            }
+            token = COMMENT;
+            return COMMENT;
+        }
+
         str += look;
         skipWhite();
         token = str;
@@ -1007,6 +1048,29 @@ public class Jude extends Helper {
             skipWhite();
         }
         return op;
+    }
+
+    static String getBoolOp(char ch) throws IOException {
+        String op = "" + ch;
+        char c = getChar();
+        if (ch == '!') {
+            return NOT;
+        }
+        if (ch == '&') {
+            match('&');
+            return AND;
+        }
+
+        if (ch == '|') {
+            match('|');
+            return OR;
+        }
+
+        if (ch == '^') {
+            return XOR;
+        }
+
+        return null;
     }
 
     static void match(char c) throws IOException {
@@ -1111,7 +1175,7 @@ public class Jude extends Helper {
             scan();
         }
 
-        if (".".equals(token)) {
+        if (endOfFile) {
             end();
         }
 
@@ -1137,7 +1201,7 @@ public class Jude extends Helper {
             }
 
             scan();
-            if (".".equals(token)) {
+            if (endOfFile) {
                 end();
             }
         }
@@ -1169,9 +1233,6 @@ public class Jude extends Helper {
             }
 
             scan();
-            if (".".equals(token)) {
-                end();
-            }
         }
     }
 
@@ -1319,7 +1380,8 @@ public class Jude extends Helper {
         preIfCount = 0;
         String endLabel = endIfLabel = newLabel();
         boolExpression();
-        emitLn("jne " + label);
+        emitLn("cmp al, 0");
+        emitLn("je " + label);
         match(')');
         match('{');
         block();
@@ -1355,7 +1417,8 @@ public class Jude extends Helper {
         match('(');
         String label = newLabel();
         boolExpression();
-        emitLn("jne " + label);
+        emitLn("cmp al, 0");
+        emitLn("je " + label);
         match(')');
         match('{');
         block();
@@ -1456,7 +1519,8 @@ public class Jude extends Helper {
         match(')');
         match('{');
         String endWhile = newLabel();
-        emitLn("jne " + endWhile);
+        emitLn("cmp al, 0");
+        emitLn("je " + endWhile);
         block();
         match('}');
         emitLn("jmp " + beginWhile);
@@ -1555,6 +1619,7 @@ public class Jude extends Helper {
 
         pushProcReg(name);
         paramList(name);
+        popProcReg(name);
         call(name);
         popProcReg(name);
     }
@@ -1731,6 +1796,14 @@ public class Jude extends Helper {
             }
         }
         match(';');
+        emitLn("jmp _end_" + info.name);
+    }
+
+    static void doComment() throws IOException {
+        getChar();
+        while (look != LF && look != CR) {
+            getChar();
+        }
     }
 
     static int paramList(String methodName) throws IOException {
@@ -1774,32 +1847,7 @@ public class Jude extends Helper {
 
     // RDI, RSI, RDX, RCX, R8, and R9.
     static void pushIntParam(Type type, int index) {
-
-        if (index > 6) {
-            // FIXME not just push rax
-            emitLn("push rax");
-        } else {
-            switch (index) {
-                case 1:
-                    emitLn("mov rdi, rax");
-                    break;
-                case 2:
-                    emitLn("mov rsi, rax");
-                    break;
-                case 3:
-                    emitLn("mov rdx, rax");
-                    break;
-                case 4:
-                    emitLn("mov rcx, rax");
-                    break;
-                case 5:
-                    emitLn("mov r8, rax");
-                    break;
-                case 6:
-                    emitLn("mov r9, rax");
-                    break;
-            }
-        }
+        emitLn("push rax");
     }
 
     static void pushFloatParam(Type type, int index) {
@@ -2016,6 +2064,7 @@ public class Jude extends Helper {
 
     static void clearParams() {
         params.clear();
+        localVariables.clear();
         currentOffset = 8;
     }
 
@@ -2043,12 +2092,14 @@ public class Jude extends Helper {
         MethodInfo info = getMethodInfo(methodName);
         int intInd = 0;
         int floatInd = 0;
+        List<String> intRegs = new ArrayList<String>();
         for (Type type : info.params) {
             if (isIntType(type)) {
                 intInd++;
                 if (intInd <= 6) {
                     // TODO pop should be in reversed order:
-                    emitLn("pop " + getIntParamReg(intInd));
+                    intRegs.add(getIntParamReg(intInd));
+                    //emitLn("pop " + getIntParamReg(intInd));
                 }
             } else if (isFloatType(type)) {
                 floatInd++;
@@ -2056,7 +2107,10 @@ public class Jude extends Helper {
                     // TODO pop float parameter
                 }
             }
+        }
 
+        for (int i = intRegs.size() - 1; i >= 0; i--) {
+            emitLn("pop " + intRegs.get(i));
         }
     }
 
@@ -2100,6 +2154,9 @@ public class Jude extends Helper {
                     break;
                 case RETURN:
                     doReturn();
+                    break;
+                case COMMENT:
+                    doComment();
                     break;
                 default:
                     abort("illegal identifier:" + word);
@@ -2873,20 +2930,20 @@ public class Jude extends Helper {
             emitLn("push rax");
             notFactor();
             emitLn("pop rbx");
-            emitLn("and rax, rbx");
+            emitLn("and al, bl");
         }
     }
 
     static void boolOr() throws IOException {
         boolTerm();
         emitLn("pop rbx");
-        emitLn("OR rax, rbx");
+        emitLn("or al, bl");
     }
 
     static void boolXor() throws IOException {
         boolTerm();
         emitLn("pop rbx");
-        emitLn("xor rax, rbx");
+        emitLn("xor al, bl");
     }
 
     static boolean isOrOp(String token) {
@@ -2944,7 +3001,7 @@ public class Jude extends Helper {
                     lessEqual(expType);
                     break;
             }
-            emitLn("cmp al, 0");
+            //emitLn("cmp al, 0");
         }
     }
 
@@ -2953,39 +3010,49 @@ public class Jude extends Helper {
                 GREATERE.equals(op) || SMALLER.equals(op) || SMALLERE.equals(op);
     }
 
+    static boolean isBoolOp(char c) {
+        return (c == '&' || c == '|' || c == '^' || c == '!');
+    }
+
     static Op getOpType(String op) {
         return ops.get(op);
     }
 
     static void equals(Type type) throws IOException {
         compare(type);
-        emitLn("setne al");
+        emitLn("sete al");
+        emitLn("and rax, 0xFF"); // clear other bits of rax
     }
 
     static void notEquals(Type type) throws IOException {
         compare(type);
-        emitLn("sete al");
+        emitLn("setne al");
+        emitLn("and rax, 0xFF");
     }
 
     static void less(Type type) throws IOException {
         compare(type);
-        emitLn("setg al");
+        emitLn("setl al");
+        emitLn("and rax, 0xFF");
     }
 
     static void greater(Type type) throws IOException {
         compare(type);
-        emitLn("setl al");
+        emitLn("setg al");
+        emitLn("and rax, 0xFF");
     }
 
     static void greaterEqual(Type type) throws IOException {
         compare(type);
-        emitLn("setle al");
+        emitLn("setge al");
+        emitLn("and rax, 0xFF");
 
     }
 
     static void lessEqual(Type type) throws IOException {
         compare(type);
-        emitLn("setge al");
+        emitLn("setle al");
+        emitLn("and rax, 0xFF");
     }
 
     static void compare(Type type) throws IOException {
@@ -3014,7 +3081,7 @@ public class Jude extends Helper {
     static void compareInt() {
         emitLn("pop rbx");
         emitLn("cmp rbx, rax");
-        emitLn("mov rax, 0");
+        //emitLn("mov rax, 0");
     }
 
     // End of bool expression
@@ -3035,13 +3102,10 @@ public class Jude extends Helper {
 
     public static void main(String[] args) throws IOException {
 
-        //emitLn("section .bss");
-        //emitLn(OUTPUT_BUFFER_ADDR + " resb 8"); // reserve 8 byte for print function
-
+        codeReader = new BufferedReader(new FileReader("qsort.jude"));
         init();
         topDecls();
         program();
-        //fetchCode();
     }
 
 }
