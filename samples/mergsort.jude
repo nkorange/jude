@@ -1,0 +1,70 @@
+int a[10];
+int b[10];
+
+void merge(int start, int middle, int end) {
+    
+    int i = start,j = middle + 1,k = 0;
+    //println("start:" + start + ", middle:" + middle + ", end:" + end);
+    while (i <= middle && j <= end) {
+        if (a[i] < a[j]) {
+            b[k] = a[i];
+            i = i + 1;
+            //println("i");
+        } else {
+            b[k] = a[j];
+            j = j + 1;
+            //println("j");
+        }
+        k = k + 1;
+    }
+
+    while (i <= middle) {
+        b[k] = a[i];
+        i = i + 1;
+        k = k + 1;
+    }
+    while (j <= end) {
+        b[k] = a[j];
+        j = j + 1;
+        k = k + 1;
+    }
+
+    for (k <- start:end) {
+        a[k] = b[k - start];
+    }
+
+}
+
+void mergesort(int start, int end) {
+
+    int middle = (end + start) / 2;
+    if (end <= start) {
+        return;
+    }
+
+    mergesort(start, middle);
+    mergesort(middle+1, end);
+    //println("start:" + start + ", middle:" + middle + ", end:" + end);
+    merge(start, middle, end);
+}
+
+void main() {
+
+    int i = 0;
+    a[0] = 6;
+    a[1] = 12;
+    a[2] = 3;
+    a[3] = 9;
+    a[4] = 100;
+    a[5] = 60;
+    a[6] = 30;
+    a[7] = 98;
+    a[8] = 1;
+    a[9] = 5;
+
+    mergesort(0, 9);
+
+    for (i <- 0:9) {
+        println(a[i]);
+    }
+}
